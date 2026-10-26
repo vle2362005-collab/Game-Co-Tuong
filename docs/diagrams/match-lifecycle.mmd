@@ -1,0 +1,11 @@
+stateDiagram-v2
+  [*] --> playing: Start hợp lệ
+  playing --> playing: Nước hợp lệ hoặc đề nghị hòa
+  playing --> paused: Mất kết nối hoặc phục hồi backend
+  paused --> playing: Hai người xác thực lại trong ngân sách
+  playing --> finished: Chiếu bí hoặc bí nước hoặc đầu hàng hoặc hòa hoặc hết giờ
+  paused --> finished: Một bên hết ngân sách và bên kia online hợp lệ
+  paused --> cancelled: Cả hai hết ngân sách hoặc phục hồi restart thất bại
+  paused --> finished: Người chơi chủ động đầu hàng
+  finished --> [*]
+  cancelled --> [*]
