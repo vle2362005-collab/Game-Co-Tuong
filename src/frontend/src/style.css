@@ -1,0 +1,24 @@
+:root { font-family: Inter, "Segoe UI", sans-serif; color: #172b26; background: #f5f3ec; font-synthesis: none; line-height: 1.6; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+.shell { max-width: 1080px; padding: 42px 36px 24px; margin: auto; }
+header { display: flex; align-items: center; gap: 14px; font-size: .82rem; letter-spacing: .14em; font-weight: 700; }
+.mark { border: 1px solid #9b4036; border-radius: 50%; width: 43px; height: 43px; display: grid; place-items: center; color: #9b4036; font-size: 1.4rem; }
+.intro { max-width: 720px; margin: 78px 0 44px; }
+.eyebrow { font-size: .73rem; color: #9b4036; letter-spacing: .18em; font-weight: 700; }
+h1 { font-family: Georgia, "Times New Roman", serif; font-weight: 400; font-size: clamp(2.8rem, 6vw, 4.5rem); line-height: 1.14; letter-spacing: -.03em; margin: 18px 0 24px; }
+.description { max-width: 560px; color: #53625b; font-size: 1rem; }
+.connection { border: 1px solid #d6dcd0; background: #fffef9; border-radius: 16px; padding: 26px 30px; max-width: 700px; }
+.connection > div { display: flex; align-items: center; gap: 12px; }
+.tag { font-size: .7rem; padding: 4px 9px; background: #eaf0e7; border-radius: 5px; letter-spacing: .06em; }
+h2 { font-size: 1.05rem; font-weight: 600; margin: 0; }
+.status { color: #53625b; font-size: .94rem; }
+.status[data-state="healthy"] { color: #276440; }
+.status[data-state="error"] { color: #9b4036; }
+button { display: inline-flex; align-items: center; gap: 30px; background: #172b26; color: #fffef9; border: 0; border-radius: 7px; padding: 12px 18px; font: inherit; font-size: .88rem; cursor: pointer; }
+button:hover { background: #2d4940; }
+button:focus-visible { outline: 3px solid #b85840; outline-offset: 4px; }
+button:disabled { opacity: .65; cursor: wait; }
+.hint { font-size: .76rem; color: #65746d; max-width: 500px; margin-bottom: 0; }
+footer { border-top: 1px solid #d6dcd0; margin-top: 64px; padding-top: 20px; display: flex; justify-content: space-between; gap: 12px; font-size: .73rem; color: #65746d; }
+@media (max-width: 550px) { .shell { padding: 26px 22px; } .intro { margin-top: 52px; } .connection { padding: 22px; } footer { flex-direction: column; margin-top: 40px; } }
