@@ -1,0 +1,263 @@
+{
+  "issue": "GCT-24",
+  "version": 1,
+  "kind": "interactive-design-prototype",
+  "screens": [
+    {
+      "id": "01-login",
+      "title": "Đăng nhập",
+      "state": {
+        "screen": "login"
+      },
+      "svg": "screens/01-login.svg"
+    },
+    {
+      "id": "02-register",
+      "title": "Đăng ký",
+      "state": {
+        "screen": "register"
+      },
+      "svg": "screens/02-register.svg"
+    },
+    {
+      "id": "03-lobby",
+      "title": "Sảnh chơi",
+      "state": {
+        "screen": "lobby"
+      },
+      "svg": "screens/03-lobby.svg"
+    },
+    {
+      "id": "04-host-waiting",
+      "title": "Chủ phòng · chưa sẵn sàng",
+      "state": {
+        "screen": "room",
+        "role": "host",
+        "guestPresent": true
+      },
+      "svg": "screens/04-host-waiting.svg"
+    },
+    {
+      "id": "05-host-ready",
+      "title": "Chủ phòng · đủ điều kiện Bắt đầu",
+      "state": {
+        "screen": "room",
+        "role": "host",
+        "guestPresent": true,
+        "ready": true,
+        "otherReady": true
+      },
+      "svg": "screens/05-host-ready.svg"
+    },
+    {
+      "id": "06-guest-ready",
+      "title": "Khách · chờ chủ phòng Bắt đầu",
+      "state": {
+        "screen": "room",
+        "role": "guest",
+        "guestPresent": true,
+        "ready": true,
+        "otherReady": true
+      },
+      "svg": "screens/06-guest-ready.svg"
+    },
+    {
+      "id": "07-match",
+      "title": "Trận đang chơi",
+      "state": {
+        "screen": "match"
+      },
+      "svg": "screens/07-match.svg"
+    },
+    {
+      "id": "08-move-confirmed",
+      "title": "Nước đi đã xác nhận",
+      "state": {
+        "screen": "match",
+        "moved": true
+      },
+      "svg": "screens/08-move-confirmed.svg"
+    },
+    {
+      "id": "09-reconnect",
+      "title": "Mất kết nối · trận tạm dừng",
+      "state": {
+        "screen": "match",
+        "paused": true,
+        "budget": 45
+      },
+      "svg": "screens/09-reconnect.svg"
+    },
+    {
+      "id": "10-restart",
+      "title": "Máy chủ phục hồi trận",
+      "state": {
+        "screen": "match",
+        "paused": true,
+        "recovery": "serverRestart",
+        "budget": 45
+      },
+      "svg": "screens/10-restart.svg"
+    },
+    {
+      "id": "11-result-win",
+      "title": "Kết quả thắng",
+      "state": {
+        "screen": "result",
+        "result": "win"
+      },
+      "svg": "screens/11-result-win.svg"
+    },
+    {
+      "id": "12-result-draw",
+      "title": "Kết quả hòa",
+      "state": {
+        "screen": "result",
+        "result": "draw"
+      },
+      "svg": "screens/12-result-draw.svg"
+    },
+    {
+      "id": "13-result-cancelled",
+      "title": "Trận hủy · không tính hòa",
+      "state": {
+        "screen": "result",
+        "result": "cancelled"
+      },
+      "svg": "screens/13-result-cancelled.svg"
+    },
+    {
+      "id": "14-history",
+      "title": "Lịch sử trận",
+      "state": {
+        "screen": "history"
+      },
+      "svg": "screens/14-history.svg"
+    },
+    {
+      "id": "15-history-empty",
+      "title": "Lịch sử rỗng",
+      "state": {
+        "screen": "history",
+        "view": "empty"
+      },
+      "svg": "screens/15-history-empty.svg"
+    },
+    {
+      "id": "16-lobby-empty",
+      "title": "Sảnh rỗng",
+      "state": {
+        "screen": "lobby",
+        "view": "empty"
+      },
+      "svg": "screens/16-lobby-empty.svg"
+    },
+    {
+      "id": "17-loading",
+      "title": "Đang tải",
+      "state": {
+        "screen": "lobby",
+        "view": "loading"
+      },
+      "svg": "screens/17-loading.svg"
+    },
+    {
+      "id": "18-error",
+      "title": "Lỗi và thao tác khôi phục",
+      "state": {
+        "screen": "lobby",
+        "view": "error"
+      },
+      "svg": "screens/18-error.svg"
+    },
+    {
+      "id": "19-room-offline",
+      "title": "Phòng chờ mất kết nối",
+      "state": {
+        "screen": "room",
+        "view": "offline",
+        "guestPresent": true
+      },
+      "svg": "screens/19-room-offline.svg"
+    },
+    {
+      "id": "20-incoming-draw",
+      "title": "Nhận đề nghị hòa",
+      "state": {
+        "screen": "match",
+        "offer": true,
+        "offerFrom": "opponent"
+      },
+      "svg": "screens/20-incoming-draw.svg"
+    },
+    {
+      "id": "21-confirm-resign",
+      "title": "Xác nhận đầu hàng",
+      "state": {
+        "screen": "match",
+        "modal": "resign"
+      },
+      "svg": "screens/21-confirm-resign.svg"
+    },
+    {
+      "id": "22-confirm-close",
+      "title": "Xác nhận đóng phòng",
+      "state": {
+        "screen": "room",
+        "role": "host",
+        "modal": "close",
+        "guestPresent": true
+      },
+      "svg": "screens/22-confirm-close.svg"
+    },
+    {
+      "id": "23-login-error",
+      "title": "Đăng nhập lỗi",
+      "state": {
+        "screen": "login",
+        "notice": "Thông tin chưa hợp lệ. Kiểm tra và thử lại."
+      },
+      "svg": "screens/23-login-error.svg"
+    },
+    {
+      "id": "24-session-expired",
+      "title": "Phiên đăng nhập hết hạn",
+      "state": {
+        "screen": "login",
+        "returnTo": "match",
+        "notice": "Phiên đã hết hạn. Đăng nhập lại để tiếp tục."
+      },
+      "svg": "screens/24-session-expired.svg"
+    },
+    {
+      "id": "25-room-empty-seat",
+      "title": "Phòng chờ · ghế Đen trống",
+      "state": {
+        "screen": "room",
+        "role": "host",
+        "guestPresent": false
+      },
+      "svg": "screens/25-room-empty-seat.svg"
+    },
+    {
+      "id": "26-confirm-leave",
+      "title": "Khách xác nhận rời phòng",
+      "state": {
+        "screen": "room",
+        "role": "guest",
+        "modal": "leave",
+        "guestPresent": true
+      },
+      "svg": "screens/26-confirm-leave.svg"
+    },
+    {
+      "id": "27-history-detail",
+      "title": "Chi tiết trận đã lưu",
+      "state": {
+        "screen": "detail",
+        "detailResult": "win"
+      },
+      "svg": "screens/27-history-detail.svg"
+    }
+  ]
+}
