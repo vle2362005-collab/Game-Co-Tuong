@@ -1,4 +1,5 @@
 using GameCoTuong.Api.Configuration;
+using GameCoTuong.Infrastructure;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 
@@ -25,6 +26,7 @@ builder.Services.AddCors(options => options.AddPolicy("Frontend", policy =>
 }));
 builder.Services.AddProblemDetails();
 builder.Services.AddHealthChecks();
+builder.Services.AddInfrastructure(builder.Configuration);
 
 var app = builder.Build();
 _ = app.Services.GetRequiredService<IOptions<BrowserClientOptions>>().Value;
