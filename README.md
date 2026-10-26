@@ -1,3 +1,5 @@
+> Cập nhật 26/10/2026: ruleset [25888788](https://github.com/vle2362005-collab/Game-Co-Tuong/settings/rules/25888788) đã Active cho main/develop, được xác minh lại qua API. Chỉ user trưởng nhóm bypass qua PR. Các đoạn mô tả chưa áp dụng bên dưới là baseline trước khi cấu hình; không còn là trạng thái hiện tại. Chưa thử bằng tài khoản thành viên.
+
 # Game Cờ Tướng
 
 Bộ khung phát triển chung cho nhóm: Vue + TypeScript và ASP.NET Core. API, bộ luật, dữ liệu và kiểm thử nằm trong các project riêng. Hiện chạy được trang khởi tạo và API `/health`; chức năng chơi cờ sẽ được triển khai ở các task tiếp theo.

@@ -1,4 +1,6 @@
-# Cấu hình bảo vệ nhánh — chưa áp dụng
+> Cập nhật 26/10/2026: ruleset [25888788](https://github.com/vle2362005-collab/Game-Co-Tuong/settings/rules/25888788) đã Active cho main/develop, được xác minh lại qua API. Chỉ user trưởng nhóm bypass qua PR. Các đoạn mô tả chưa áp dụng bên dưới là baseline trước khi cấu hình; không còn là trạng thái hiện tại. Chưa thử bằng tài khoản thành viên.
+
+# Cấu hình bảo vệ nhánh — đã Active
 
 `gct-review.json` là cấu hình chuẩn bị để import cho repo `vle2362005-collab/Game-Co-Tuong`. Commit/merge file này không bật quy tắc trên GitHub. Giá trị `enforcement: active` chỉ có hiệu lực sau khi người có quyền quản trị import/lưu ruleset.
 
@@ -21,7 +23,6 @@ Chưa có bằng chứng bảo vệ develop hoặc bắt buộc review của tr�
 | Restrict updates | Chỉ actor có bypass được cập nhật nhánh, kể cả merge |
 | Bypass | Đúng user `vle2362005-collab`, ID 231604162; chỉ dùng qua PR, không cấp cho mọi admin hoặc ứng dụng |
 | Pull request | Bắt buộc PR, một approval và Code Owner review; commit mới làm review cũ hết hiệu lực |
-| Review dismissal | Chỉ user trưởng nhóm được dismiss review |
 | Merge | Dùng merge commit; cần resolve các trao đổi review |
 | Force-push/xóa | Bị chặn trên hai nhánh; không thêm ngoại lệ luôn luôn bypass |
 

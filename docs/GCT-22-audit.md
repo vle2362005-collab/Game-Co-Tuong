@@ -1,3 +1,5 @@
+> Cập nhật 26/10/2026: ruleset [25888788](https://github.com/vle2362005-collab/Game-Co-Tuong/settings/rules/25888788) đã Active cho main/develop, được xác minh lại qua API. Chỉ user trưởng nhóm bypass qua PR. Các đoạn mô tả chưa áp dụng bên dưới là baseline trước khi cấu hình; không còn là trạng thái hiện tại. Chưa thử bằng tài khoản thành viên.
+
 # GCT-22 — Bàn giao quy trình Jira và GitHub
 
 [Jira GCT-22](https://vle2362005.atlassian.net/browse/GCT-22) · Nhánh `feature/GCT-22-jira-workflow`, PR vào develop.

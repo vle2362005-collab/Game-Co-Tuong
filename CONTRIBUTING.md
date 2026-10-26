@@ -1,3 +1,5 @@
+> Cập nhật 26/10/2026: ruleset [25888788](https://github.com/vle2362005-collab/Game-Co-Tuong/settings/rules/25888788) đã Active cho main/develop, được xác minh lại qua API. Chỉ user trưởng nhóm bypass qua PR. Các đoạn mô tả chưa áp dụng bên dưới là baseline trước khi cấu hình; không còn là trạng thái hiện tại. Chưa thử bằng tài khoản thành viên.
+
 # Cách làm việc chung — Game Cờ Tướng
 
 Jira giữ yêu cầu và phân công; GitHub giữ mã nguồn, tài liệu và PR. Mỗi Task có một người chịu trách nhiệm, một nhánh chính và PR mang đúng mã GCT. Trưởng nhóm `@vle2362005-collab` duyệt và merge.
