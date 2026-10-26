@@ -1,0 +1,29 @@
+# Build outputs and local tools
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+**/coverage/
+**/TestResults/
+artifacts/
+.dotnet/
+
+# IDE and user-specific configuration
+.vs/
+.idea/
+*.user
+*.suo
+*.log
+.DS_Store
+Thumbs.db
+
+# Local configuration and credentials (examples remain tracked)
+**/.env
+**/.env.*
+!**/.env.example
+**/appsettings.Local.json
+**/appsettings.*.Local.json
+*.pfx
+*.p12
+*.pem
+*.key

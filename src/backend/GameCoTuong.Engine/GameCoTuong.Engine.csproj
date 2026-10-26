@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../GameCoTuong.Domain/GameCoTuong.Domain.csproj" />
+  </ItemGroup>
+</Project>
