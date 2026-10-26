@@ -1,6 +1,6 @@
 {
   "issue": "GCT-24",
-  "version": 1,
+  "version": 2,
   "kind": "interactive-design-prototype",
   "screens": [
     {
@@ -258,6 +258,140 @@
         "detailResult": "win"
       },
       "svg": "screens/27-history-detail.svg"
+    },
+    {
+      "id": "28-video-idle",
+      "title": "Video · bắt đầu gọi",
+      "state": {
+        "screen": "match",
+        "panel": "video"
+      },
+      "svg": "screens/28-video-idle.svg"
+    },
+    {
+      "id": "29-video-preview",
+      "title": "Video · kiểm tra thiết bị",
+      "state": {
+        "screen": "match",
+        "panel": "video",
+        "call": "preview"
+      },
+      "svg": "screens/29-video-preview.svg"
+    },
+    {
+      "id": "30-video-calling",
+      "title": "Video · đang gọi",
+      "state": {
+        "screen": "match",
+        "panel": "video",
+        "call": "calling",
+        "mic": true,
+        "camera": true
+      },
+      "svg": "screens/30-video-calling.svg"
+    },
+    {
+      "id": "31-video-incoming",
+      "title": "Video · nhận cuộc gọi",
+      "state": {
+        "screen": "match",
+        "panel": "video",
+        "call": "incoming"
+      },
+      "svg": "screens/31-video-incoming.svg"
+    },
+    {
+      "id": "32-video-connected",
+      "title": "Video · đã kết nối",
+      "state": {
+        "screen": "match",
+        "panel": "video",
+        "call": "connected",
+        "mic": true,
+        "camera": true
+      },
+      "svg": "screens/32-video-connected.svg"
+    },
+    {
+      "id": "33-video-muted",
+      "title": "Video · tắt mic và camera",
+      "state": {
+        "screen": "match",
+        "panel": "video",
+        "call": "connected",
+        "mic": false,
+        "camera": false
+      },
+      "svg": "screens/33-video-muted.svg"
+    },
+    {
+      "id": "34-video-permission",
+      "title": "Video · từ chối quyền",
+      "state": {
+        "screen": "match",
+        "panel": "video",
+        "call": "error",
+        "callError": "permission"
+      },
+      "svg": "screens/34-video-permission.svg"
+    },
+    {
+      "id": "35-video-no-device",
+      "title": "Video · thiếu thiết bị",
+      "state": {
+        "screen": "match",
+        "panel": "video",
+        "call": "error",
+        "callError": "missing"
+      },
+      "svg": "screens/35-video-no-device.svg"
+    },
+    {
+      "id": "36-video-device-busy",
+      "title": "Video · thiết bị đang bận",
+      "state": {
+        "screen": "match",
+        "panel": "video",
+        "call": "error",
+        "callError": "busy"
+      },
+      "svg": "screens/36-video-device-busy.svg"
+    },
+    {
+      "id": "37-video-reconnecting",
+      "title": "Video · nối lại cuộc gọi",
+      "state": {
+        "screen": "match",
+        "panel": "video",
+        "call": "reconnecting"
+      },
+      "svg": "screens/37-video-reconnecting.svg"
+    },
+    {
+      "id": "38-video-ended",
+      "title": "Video · kết thúc gọi",
+      "state": {
+        "screen": "match",
+        "panel": "video",
+        "call": "ended"
+      },
+      "svg": "screens/38-video-ended.svg"
+    },
+    {
+      "id": "39-room-video",
+      "title": "Phòng chờ · video call",
+      "state": {
+        "screen": "room",
+        "role": "host",
+        "guestPresent": true,
+        "ready": true,
+        "otherReady": true,
+        "panel": "video",
+        "call": "connected",
+        "mic": true,
+        "camera": true
+      },
+      "svg": "screens/39-room-video.svg"
     }
   ]
 }

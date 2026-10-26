@@ -5,7 +5,7 @@ Bàn giao thiết kế ngày 27/10/2026. Bản mẫu phục vụ review thao tá
 ## Xem và thử
 
 - Tải [prototype.html](prototype.html), mở trực tiếp bằng Chrome hoặc Edge. File tự chứa toàn bộ giao diện và JavaScript, không cần cài package hay chạy server.
-- Chọn một trong **27 kịch bản** ở thanh review phía trên để xem ngay màn hình/trạng thái tương ứng.
+- Chọn một trong **39 kịch bản** ở thanh review phía trên để xem ngay màn hình/trạng thái tương ứng.
 - Thử luồng chính: nhập username bất kỳ từ 3 ký tự và mật khẩu minh họa từ 8 ký tự → Đăng nhập → Tạo phòng → bấm **Đối thủ vào & sẵn sàng** ở thanh giả lập → Tôi đã sẵn sàng → Bắt đầu.
 - Trong trận, bấm Tốt Đỏ ở cột 0 hàng 6 rồi điểm xanh ở hàng 5 để thử **một nước minh họa**. Bộ luật hoàn chỉnh được xây dựng ở các thẻ engine.
 - Thanh trên cùng giả lập sự kiện từ bên còn lại/máy chủ. Chúng là công cụ review, không thuộc giao diện sản phẩm.
@@ -28,10 +28,29 @@ Tên người chơi và dữ liệu trận là dữ liệu minh họa. Thông ti
 
 ![Thiết kế bàn cờ](screens/07-match.svg)
 
+## Quân cờ và video call — cập nhật theo review
+
+![Bộ quân cờ vector](assets/pieces-preview.svg)
+
+- Đã thay nhãn chữ Xe/Mã/Tượng… trên mặt quân bằng **14 asset SVG** (7 loại × Đỏ/Đen), nét Hán tự dạng path không phụ thuộc font. [Nguồn artwork và thay đổi](assets/SOURCES.md).
+- Bên cạnh Trò chuyện có tab **Video call** trong phòng chờ và trận đấu. Có nút Gọi, xem trước thiết bị, gửi lời mời, nhận/từ chối, bật/tắt micro/camera, kết thúc và gọi lại.
+- Hai khung người gọi/đối thủ và chỉ báo thiết bị được mô phỏng. Bản mẫu không gọi getUserMedia, không xin quyền, không bật camera/micro thật và không truyền âm thanh/hình ảnh.
+
+| Kịch bản video | Bản vẽ |
+|---|---|
+| Bắt đầu gọi / kiểm tra thiết bị | [28](screens/28-video-idle.svg), [29](screens/29-video-preview.svg) |
+| Đang gọi / cuộc gọi đến | [30](screens/30-video-calling.svg), [31](screens/31-video-incoming.svg) |
+| Đã kết nối / tắt mic và camera | [32](screens/32-video-connected.svg), [33](screens/33-video-muted.svg) |
+| Từ chối quyền / không có thiết bị / đang bận | [34](screens/34-video-permission.svg), [35](screens/35-video-no-device.svg), [36](screens/36-video-device-busy.svg) |
+| Lỗi đường truyền / kết thúc gọi | [37](screens/37-video-reconnecting.svg), [38](screens/38-video-ended.svg) |
+| Gọi từ phòng chờ | [39](screens/39-room-video.svg) |
+
+Theo [GCT-11](https://vle2362005.atlassian.net/browse/GCT-11), [GCT-66](https://vle2362005.atlassian.net/browse/GCT-66) và [GCT-84](https://vle2362005.atlassian.net/browse/GCT-84): thiết bị mặc định tắt, gọi sau thao tác người dùng; lỗi video không khóa bàn cờ; rời phòng xóa trạng thái thiết bị/cuộc gọi. Phần triển khai WebRTC thật và kiểm thử hai thiết bị thuộc các thẻ đó.
+
 ## Yêu cầu hình thức
 
 - Bàn cờ nền **#FFFFFF**, viền và lưới **#000000**, 9 cột × 10 hàng, có sông và hai cửu cung.
-- Đen ở hàng 0 phía trên, Đỏ ở hàng 9 phía dưới; 32 quân khởi đầu, tên quân tiếng Việt để dễ đọc.
+- Đen ở hàng 0 phía trên, Đỏ ở hàng 9 phía dưới; 32 quân khởi đầu, ký hiệu Hán tự bằng hình vector hai vòng viền theo hình tham khảo; nhãn accessibility vẫn bằng tiếng Việt.
 - Card bo góc 20–28px; thông báo 18px; nút và ô nhập 12–13px. Bàn cờ giữ góc vuông.
 - Nền sáng #F7F7F4, chữ #191C1A; đỏ #B7352F cho thương hiệu/quân Đỏ, xanh #28754C cho trạng thái hợp lệ.
 - Kiểu chữ Inter / Segoe UI / DejaVu Sans; không tải font hoặc tài nguyên ngoài.
@@ -83,7 +102,7 @@ node docs/design/GCT-24/build.mjs
 node docs/design/GCT-24/check.mjs
 ```
 
-Đã đạt **28 kiểm tra** mô hình tương tác, quyền, cấu trúc SVG và cú pháp script; 27/27 SVG parse XML và render được. Đã xem hình các màn hình và sửa chồng tiêu đề/thông báo. Đây không phải kết quả kiểm thử backend, SQL Server hay engine. Chưa thực hiện kiểm thử tương tác bằng trình duyệt trong môi trường xây dựng này vì bộ Chromium tải về không hợp lệ.
+Đã đạt **42 kiểm tra** mô hình tương tác, quyền, vòng đời cuộc gọi, cấu trúc SVG và cú pháp script; 39 SVG màn hình, 14 quân cờ và 1 gallery đều parse XML được. Đã xem hình các màn hình và sửa chồng tiêu đề/thông báo. Đây không phải kết quả kiểm thử backend, SQL Server hay engine. Chưa thực hiện kiểm thử tương tác bằng trình duyệt trong môi trường xây dựng này vì bộ Chromium tải về không hợp lệ.
 
 File Figma mới đã được tạo nhưng gói Starter chạm giới hạn MCP trước khi ghi được màn hình. Bộ bàn giao hoàn chỉnh của lần này là HTML/SVG và mã nguồn trong thư mục này; không ghi nhận file Figma trống là thiết kế đã hoàn thành.
 

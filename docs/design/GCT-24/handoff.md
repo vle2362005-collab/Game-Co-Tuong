@@ -44,3 +44,19 @@
 - Tích hợp accessibility và responsive thực: focus dialog, nhãn input, keyboard, thông báo live, cỡ chữ, tương phản và vùng bấm trên thiết bị thật.
 
 Mô hình đã có kiểm tra tự động để hỗ trợ review thiết kế; các ca tích hợp trên chưa được đánh dấu pass.
+
+## Bổ sung video call theo review GCT-24
+
+- Tham chiếu GCT-11, GCT-65/66/67 và GCT-84/85. UI bổ sung không đồng nghĩa các thẻ WebRTC đã triển khai hoặc Done.
+- Tab Video call nằm trong cùng card với chat ở phòng chờ và trận. Cuộc gọi không mở từ sảnh/chi tiết lịch sử; chờ đủ hai người trong cùng phòng và có kết nối hợp lệ.
+- Luồng gọi đi: Gọi video → xem trước, chọn mic/camera → gửi lời mời → đối thủ chấp nhận → kết nối. Không tạo nhiều phiên gọi từ thao tác gửi lặp.
+- Luồng gọi đến: hiển thị người gọi → Chấp nhận hoặc Từ chối. Thiết bị mặc định tắt kể cả khi mới chấp nhận; bật từng thiết bị bằng thao tác rõ ràng.
+- Khi triển khai thật, dùng HTTPS/localhost và xin quyền sau thao tác người dùng. Bật giao diện thiết bị chỉ khi có track thật được cấp; phân biệt từ chối quyền, thiếu thiết bị, thiết bị bận và lỗi mạng.
+- Tắt micro/camera cần cập nhật đúng track; kết thúc gọi/rời phòng phải dừng tracks, đóng PeerConnection, bỏ video srcObject và gỡ handler phòng cũ theo GCT-84. Vào phòng mới không còn audio/video hay sự kiện cũ.
+- Nối lại media độc lập với khôi phục bàn cờ. Lỗi video không đổi lượt, nước đi, kết quả hoặc tự pause trận. UI có Thử lại/Kết thúc/Tiếp tục chơi. Không tự bật lại thiết bị sau lỗi.
+- Bản mẫu giữ trạng thái cuộc gọi khi chuyển phòng chờ sang trận của cùng room; kết thúc trận hoặc rời phòng sẽ tắt trạng thái media. Tùy chính sách sản phẩm cuối cùng, duy trì cuộc gọi ở phòng finished cần giữ nút kết thúc/thiết bị nhìn thấy được.
+- Các state call/mic/camera trong model chỉ phục vụ review. Prototype không mở thiết bị, không thiết lập PeerConnection và không có signaling; GCT-65 chốt hợp đồng signaling trước khi nối GCT-66.
+
+## Tài nguyên quân cờ
+
+`assets/pieces/` chứa 14 SVG độc lập; `pieces.mjs` cung cấp symbol nội tuyến cho prototype. Mỗi quân là path/vector, không cần cài font Hán tự. Giữ mapping `general, advisor, elephant, horse, chariot, cannon, soldier` × `red/black` khi dùng trong Vue; thêm tên tiếng Việt cho aria-label/tooltip. Nguồn public-domain và phần chỉnh sửa được ghi ở `assets/SOURCES.md`.
