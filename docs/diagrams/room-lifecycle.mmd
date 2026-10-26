@@ -1,0 +1,8 @@
+stateDiagram-v2
+  [*] --> waiting: Tạo phòng
+  waiting --> waiting: Tham gia hoặc đổi ready
+  waiting --> playing: Chủ Start và hai người ready online
+  waiting --> closed: Chủ rời hoặc đóng hoặc hết hạn
+  playing --> finished: Trận finished hoặc cancelled
+  finished --> closed: Chủ đóng hoặc rời hoặc đủ 5 phút
+  closed --> [*]
