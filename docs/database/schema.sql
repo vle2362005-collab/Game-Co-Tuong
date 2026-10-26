@@ -141,8 +141,9 @@ GO
 
 -- ============================================================================
 -- 5. BẢNG Matches (Trận đấu)
--- BR-01 / BR-02: Mỗi phòng có 1 trận. Status: playing, paused, finished, cancelled
--- Lưu Snapshot bàn cờ, đồng hồ, ngân sách phục hồi 60s, đề nghị hòa
+-- BR-01 / BR-02: Mỗi phòng có đúng 1 trận (v1). Status: playing, paused, finished, cancelled
+-- Ràng buộc UQ_Matches_RoomId bảo đảm 1 phòng chỉ có 1 trận đấu.
+-- Ràng buộc UQ_Matches_Id_RoomId hỗ trợ Composite Foreign Key từ Rooms(CurrentMatchId, Id).
 -- ============================================================================
 IF OBJECT_ID(N'dbo.Matches', N'U') IS NULL
 BEGIN
@@ -190,6 +191,10 @@ BEGIN
         CONSTRAINT PK_Matches PRIMARY KEY CLUSTERED (Id),
         -- FK tới Rooms: KHÔNG CASCADE DELETE để bảo toàn dữ liệu lịch sử khi đóng phòng
         CONSTRAINT FK_Matches_Rooms_RoomId FOREIGN KEY (RoomId) REFERENCES dbo.Rooms(Id) ON DELETE NO ACTION,
+        -- Ràng buộc 1 phòng chỉ có 1 trận ở v1
+        CONSTRAINT UQ_Matches_RoomId UNIQUE NONCLUSTERED (RoomId),
+        -- Hỗ trợ composite FK co-location từ Rooms(CurrentMatchId, Id)
+        CONSTRAINT UQ_Matches_Id_RoomId UNIQUE NONCLUSTERED (Id, RoomId),
         CONSTRAINT CK_Matches_Status CHECK (Status IN (N'playing', N'paused', N'finished', N'cancelled')),
         CONSTRAINT CK_Matches_SideToMove CHECK (SideToMove IN (N'red', N'black')),
         CONSTRAINT CK_Matches_RecoveryReason CHECK (RecoveryReason IS NULL OR RecoveryReason IN (N'disconnect', N'serverRestart')),
@@ -200,14 +205,39 @@ BEGIN
         ))
     );
 END
+ELSE
+BEGIN
+    -- Đảm bảo các ràng buộc mới tồn tại nếu bảng Matches đã tạo từ trước
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'UQ_Matches_RoomId' AND object_id = OBJECT_ID(N'dbo.Matches'))
+    BEGIN
+        ALTER TABLE dbo.Matches ADD CONSTRAINT UQ_Matches_RoomId UNIQUE NONCLUSTERED (RoomId);
+    END
+
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'UQ_Matches_Id_RoomId' AND object_id = OBJECT_ID(N'dbo.Matches'))
+    BEGIN
+        ALTER TABLE dbo.Matches ADD CONSTRAINT UQ_Matches_Id_RoomId UNIQUE NONCLUSTERED (Id, RoomId);
+    END
+END
 GO
 
--- Liên kết FK từ Rooms.CurrentMatchId tới Matches.Id (nếu chưa có)
+-- Liên kết Composite Foreign Key từ Rooms(CurrentMatchId, Id) tới Matches(Id, RoomId)
+-- Bảo đảm trận được tham chiếu PHẢI thuộc chính phòng đó (Matches.RoomId = Rooms.Id), chống trỏ nhầm sang trận của phòng khác
+IF EXISTS (
+    SELECT 1 FROM sys.foreign_keys fk 
+    WHERE fk.name = N'FK_Rooms_Matches_CurrentMatchId' 
+      AND fk.parent_object_id = OBJECT_ID(N'dbo.Rooms')
+      AND (SELECT COUNT(*) FROM sys.foreign_key_columns fkc WHERE fkc.constraint_object_id = fk.object_id) < 2
+)
+BEGIN
+    ALTER TABLE dbo.Rooms DROP CONSTRAINT FK_Rooms_Matches_CurrentMatchId;
+END
+GO
+
 IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = N'FK_Rooms_Matches_CurrentMatchId' AND parent_object_id = OBJECT_ID(N'dbo.Rooms'))
 BEGIN
     ALTER TABLE dbo.Rooms
     ADD CONSTRAINT FK_Rooms_Matches_CurrentMatchId
-    FOREIGN KEY (CurrentMatchId) REFERENCES dbo.Matches(Id) ON DELETE NO ACTION;
+    FOREIGN KEY (CurrentMatchId, Id) REFERENCES dbo.Matches(Id, RoomId) ON DELETE NO ACTION;
 END
 GO
 
@@ -385,19 +415,27 @@ GO
 
 -- ============================================================================
 -- 12. DỮ LIỆU SEED MẪU (Demo Seed Data - Dùng cho Development / Testing)
--- Mật khẩu mã hóa giả lập (SHA256 demo placeholder cho test môi trường)
+-- Kiểm tra và chèn riêng từng tài khoản Đỏ/Đen để tránh bỏ sót hoặc lỗi trùng lặp
+-- Mật khẩu mã hóa giả lập (placeholder cho test môi trường, chưa xác nhận đăng nhập)
 -- ============================================================================
 BEGIN TRANSACTION;
 
--- Seed Users
 DECLARE @UserRedId UNIQUEIDENTIFIER = '11111111-1111-1111-1111-111111111111';
 DECLARE @UserBlackId UNIQUEIDENTIFIER = '22222222-2222-2222-2222-222222222222';
 
-IF NOT EXISTS (SELECT 1 FROM dbo.Users WHERE Id = @UserRedId)
+-- 1. Chèn riêng tài khoản Đỏ (nếu chưa tồn tại)
+IF NOT EXISTS (SELECT 1 FROM dbo.Users WHERE Id = @UserRedId OR NormalizedUsername = N'KYTHU_DO')
 BEGIN
     INSERT INTO dbo.Users (Id, Username, NormalizedUsername, Email, NormalizedEmail, PasswordHash, DisplayName)
     VALUES 
-    (@UserRedId, N'kythu_do', N'KYTHU_DO', N'red@cotuong.local', N'RED@COTUONG.LOCAL', N'AQAAAAEAACcQAAAAEPlaceholderPasswordHashRedForLocalTesting123456789==', N'Kỳ Thủ Đỏ'),
+    (@UserRedId, N'kythu_do', N'KYTHU_DO', N'red@cotuong.local', N'RED@COTUONG.LOCAL', N'AQAAAAEAACcQAAAAEPlaceholderPasswordHashRedForLocalTesting123456789==', N'Kỳ Thủ Đỏ');
+END
+
+-- 2. Chèn riêng tài khoản Đen (nếu chưa tồn tại)
+IF NOT EXISTS (SELECT 1 FROM dbo.Users WHERE Id = @UserBlackId OR NormalizedUsername = N'KYTHU_DEN')
+BEGIN
+    INSERT INTO dbo.Users (Id, Username, NormalizedUsername, Email, NormalizedEmail, PasswordHash, DisplayName)
+    VALUES 
     (@UserBlackId, N'kythu_den', N'KYTHU_DEN', N'black@cotuong.local', N'BLACK@COTUONG.LOCAL', N'AQAAAAEAACcQAAAAEPlaceholderPasswordHashBlackForLocalTesting123456789==', N'Kỳ Thủ Đen');
 END
 
