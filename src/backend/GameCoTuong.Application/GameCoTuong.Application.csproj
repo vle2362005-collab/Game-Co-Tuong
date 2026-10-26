@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../GameCoTuong.Domain/GameCoTuong.Domain.csproj" />
+    <ProjectReference Include="../GameCoTuong.Engine/GameCoTuong.Engine.csproj" />
+  </ItemGroup>
+</Project>

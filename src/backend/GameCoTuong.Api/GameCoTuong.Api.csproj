@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <UserSecretsId>game-co-tuong-development</UserSecretsId>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../GameCoTuong.Application/GameCoTuong.Application.csproj" />
+    <ProjectReference Include="../GameCoTuong.Infrastructure/GameCoTuong.Infrastructure.csproj" />
+    <Content Update="appsettings.Local.json" CopyToPublishDirectory="Never" />
+    <Content Update="appsettings.Local.example.json" CopyToPublishDirectory="Never" />
+  </ItemGroup>
+</Project>

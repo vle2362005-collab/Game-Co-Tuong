@@ -1,0 +1,24 @@
+{
+  "name": "game-co-tuong-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "npm@11.9.0",
+  "engines": { "node": ">=24.14.0 <25", "npm": ">=11 <12" },
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "vue-tsc --noEmit",
+    "build": "npm run typecheck && vite build",
+    "preview": "vite preview --host localhost --port 4173 --strictPort",
+    "test": "vitest run"
+  },
+  "dependencies": { "vue": "3.5.44" },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@vitejs/plugin-vue": "6.0.10",
+    "typescript": "5.9.3",
+    "vite": "8.3.5",
+    "vitest": "5.0.5",
+    "vue-tsc": "3.3.13"
+  }
+}
