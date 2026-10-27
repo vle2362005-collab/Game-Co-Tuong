@@ -1,4 +1,5 @@
 using GameCoTuong.Api.Configuration;
+using GameCoTuong.Api.Services;
 using GameCoTuong.Infrastructure;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
@@ -27,6 +28,10 @@ builder.Services.AddCors(options => options.AddPolicy("Frontend", policy =>
 builder.Services.AddProblemDetails();
 builder.Services.AddHealthChecks();
 builder.Services.AddInfrastructure(builder.Configuration);
+if (!string.IsNullOrEmpty(builder.Configuration.GetConnectionString("GameDatabase")))
+{
+    builder.Services.AddHostedService<RoomCleanupWorker>();
+}
 
 var app = builder.Build();
 _ = app.Services.GetRequiredService<IOptions<BrowserClientOptions>>().Value;

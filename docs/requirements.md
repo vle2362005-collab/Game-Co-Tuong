@@ -41,7 +41,7 @@ AI/video là phần mở rộng đã có trong kế hoạch, không phải chứ
 | BR-08 | Restart một backend: nạp snapshot, moves và ngân sách còn lại vào paused. Người đã offline giữ deadline cũ; người trước đó online nhận cửa sổ từ thời điểm khôi phục bằng ngân sách còn lại. Cả hai xác thực lại đúng hạn thì tiếp tục; một bên không phục hồi thì hủy `serverRestart`, không trao thắng tự động. |
 | BR-09 | Đồng hồ sau crash dùng checkpoint cuối đã commit, không tự đoán thời điểm crash hay trừ thời gian backend không hoạt động. Đây là giới hạn độ chính xác của bản demo; phải lưu clock/checkpoint trong cùng transaction nước đi. |
 | BR-10 | Đề nghị hòa chỉ khi playing PvP; tối đa một đề nghị hiệu lực, 30 giây, đồng hồ vẫn chạy. Đối thủ mới được chấp nhận/từ chối; Move, pause, kết thúc hoặc hết hạn làm mất hiệu lực. |
-| BR-11 | Phòng chờ không hoạt động 15 phút được đóng, trừ khi còn cửa sổ phục hồi; phòng finished đóng sau tối đa 5 phút hoặc khi chủ đóng/rời. Dọn phòng không hard-delete trận, nước, receipt hay kết quả. |
+| BR-11 | Phòng chờ không hoạt động 15 phút được đóng, trừ khi còn cửa sổ phục hồi; phòng finished đóng sau tối đa 5 phút hoặc khi cả hai người chơi rời đi. Dọn phòng định kỳ, làm sạch trạng thái kết nối tạm thời nhưng không hard-delete trận, nước, receipt hay kết quả. |
 | BR-12 | Log có requestId, userId, roomId/matchId và lý do; không chứa mật khẩu, token hoặc connection string. Các thao tác vượt quyền không sửa dữ liệu. |
 
 BR-05, BR-08 và BR-09 làm rõ cách xử lý biên cho GCT-76/78, cần trưởng nhóm kiểm tra khi duyệt thiết kế. Không thay quy tắc mất mạng bằng “mỗi lần được thêm 60 giây”, không tự hủy ngay mọi trận lúc restart.
