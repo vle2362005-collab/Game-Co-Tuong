@@ -8,7 +8,7 @@ describe('health API boundary', () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 'Healthy', service: 'game-co-tuong-api' })))
     vi.stubGlobal('fetch', fetchMock)
     const signal = new AbortController().signal
-    await expect(checkHealth('http://localhost:5001', signal)).resolves.toEqual({ status: 'Unhealthy', service: 'game-co-tuong-api' }) // GCT-23 temporary CI failure probe
+    await expect(checkHealth('http://localhost:5001', signal)).resolves.toEqual({ status: 'Healthy', service: 'game-co-tuong-api' })
     expect(fetchMock).toHaveBeenCalledWith(new URL('http://localhost:5001/health'), { signal })
   })
 

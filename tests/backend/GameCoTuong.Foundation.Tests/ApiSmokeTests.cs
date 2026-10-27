@@ -4,11 +4,11 @@ using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace GameCoTuong.Foundation.Tests;
 
-public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>>
+public sealed class ApiSmokeTests : IClassFixture<TestApiFactory>
 {
     private readonly HttpClient client;
 
-    public ApiSmokeTests(WebApplicationFactory<Program> factory)
+    public ApiSmokeTests(TestApiFactory factory)
     {
         client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -24,7 +24,7 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var health = await response.Content.ReadFromJsonAsync<Dictionary<string, string>>();
         Assert.NotNull(health);
-        Assert.Equal("Unhealthy", health["status"]); // GCT-23 temporary CI failure probe
+        Assert.Equal("Healthy", health["status"]);
         Assert.Equal("game-co-tuong-api", health["service"]);
         Assert.Equal(2, health.Count);
     }

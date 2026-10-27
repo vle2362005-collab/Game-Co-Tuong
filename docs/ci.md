@@ -15,7 +15,7 @@ Mở **PR → Checks → Backend/Frontend → Details** để đọc từng bư�
 
 ## Dữ liệu và cấu hình
 
-- Backend CI dùng môi trường `Testing`, không nạp user-secrets Development. Checkout sạch không có `appsettings.Local.json` hay `.env.local` của thành viên.
+- Backend CI và `TestApiFactory` dùng môi trường `Testing`, không nạp user-secrets Development. Test host ghi đè cấu hình CSDL/JWT bằng giá trị rỗng; có test xác nhận môi trường và cấu hình này. Checkout sạch không có `appsettings.Local.json` hay `.env.local` của thành viên.
 - Test engine tạo bàn/quân riêng trong bộ nhớ; test API dùng test host trong tiến trình; test frontend giả lập `fetch` và dọn mock sau mỗi ca. Test EF hiện chỉ đọc model/seed bằng dữ liệu demo, không mở kết nối SQL Server.
 - CI không cần repository secret và không nhận cấu hình production. Token chỉ có `contents: read`; checkout không lưu credential. Chạy bằng `pull_request`, không dùng `pull_request_target` để thực thi mã PR.
 - Khi bổ sung test CSDL thật, tạo SQL Server/database riêng cho từng lượt chạy và dọn sau test. Không trỏ CI vào CSDL demo/production; mật khẩu/JWT/TURN phải ở biến môi trường/secret phía backend. Biến `VITE_*` là công khai trong bundle.
