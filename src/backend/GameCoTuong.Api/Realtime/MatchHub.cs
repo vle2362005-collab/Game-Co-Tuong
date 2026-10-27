@@ -12,6 +12,9 @@ public sealed class MatchHub(
     public async Task<MatchReconnectState> ReconnectMatch(Guid matchId)
     {
         var userId = GetAuthenticatedUserId();
+        using var transition = await connectionRegistry.AcquirePlayerTransitionAsync(
+            matchId, userId, Context.ConnectionAborted);
+
         if (!connectionRegistry.CanTrack(Context.ConnectionId, matchId, userId))
         {
             throw new HubException("Một kết nối chỉ được tham gia một trận đấu.");
@@ -58,11 +61,18 @@ public sealed class MatchHub(
         {
             if (connectionRegistry.UntrackLastConnection(Context.ConnectionId, out var matchId, out var userId))
             {
-                var state = await reconnectService.MarkDisconnectedAsync(
+                using var transition = await connectionRegistry.AcquirePlayerTransitionAsync(
                     matchId, userId, CancellationToken.None);
-                if (state is not null)
+                if (!connectionRegistry.HasConnections(matchId, userId))
                 {
-                    await Clients.Group(GroupName(matchId)).SendAsync("MatchPaused", state);
+                    var state = await reconnectService.MarkDisconnectedAsync(
+                        matchId, userId, CancellationToken.None);
+                    if (state is not null)
+                    {
+                        await Clients.Group(GroupName(matchId))
+                            .SendAsync("PlayerDisconnected", state);
+                        await Clients.Group(GroupName(matchId)).SendAsync("MatchPaused", state);
+                    }
                 }
             }
         }

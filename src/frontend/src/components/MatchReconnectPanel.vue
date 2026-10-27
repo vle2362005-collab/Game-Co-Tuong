@@ -23,8 +23,12 @@ interface MatchReconnectState {
   board: Piece[]
   isPaused: boolean
   redDisconnected: boolean
+  redDisconnectedAt: string | null
+  redReconnectDeadline: string | null
   redRecoveryRemainingMs: number
   blackDisconnected: boolean
+  blackDisconnectedAt: string | null
+  blackReconnectDeadline: string | null
   blackRecoveryRemainingMs: number
   winner: string | null
   resultReason: string | null
@@ -63,18 +67,6 @@ function updateState(next: MatchReconnectState) {
   matchState.value = {
     ...next,
     yourSide: matchState.value?.yourSide ?? next.yourSide,
-  }
-}
-
-function markLocalDisconnect() {
-  const state = matchState.value
-  if (!state) return
-
-  state.isPaused = true
-  if (state.yourSide === 'red') {
-    state.redDisconnected = true
-  } else {
-    state.blackDisconnected = true
   }
 }
 
@@ -127,13 +119,13 @@ async function startConnection() {
     .build()
 
   connection.on('MatchPaused', updateState)
+  connection.on('PlayerDisconnected', updateState)
   connection.on('PlayerReconnected', updateState)
   connection.on('MatchEnded', (state: MatchReconnectState) => {
     updateState(state)
     connectionStatus.value = 'connected'
   })
   connection.onreconnecting(() => {
-    markLocalDisconnect()
     connectionStatus.value = 'reconnecting'
   })
   connection.onreconnected(async () => {
@@ -146,7 +138,6 @@ async function startConnection() {
     }
   })
   connection.onclose(() => {
-    markLocalDisconnect()
     connectionStatus.value = 'disconnected'
   })
 
@@ -218,6 +209,16 @@ onUnmounted(() => {
         <span>Đến lượt: <strong>{{ matchState.sideToMove === 'red' ? 'Đỏ' : 'Đen' }}</strong></span>
         <span>Bạn cầm quân: <strong>{{ matchState.yourSide === 'red' ? 'Đỏ' : 'Đen' }}</strong></span>
       </div>
+      <div class="player-presence" aria-label="Trạng thái kết nối người chơi">
+        <span :data-disconnected="matchState.redDisconnected">
+          Đỏ: {{ matchState.redDisconnected ? 'Mất kết nối' : 'Đang kết nối' }}
+          <template v-if="matchState.redDisconnected">({{ formatCountdown(matchState.redRecoveryRemainingMs) }} để nối lại)</template>
+        </span>
+        <span :data-disconnected="matchState.blackDisconnected">
+          Đen: {{ matchState.blackDisconnected ? 'Mất kết nối' : 'Đang kết nối' }}
+          <template v-if="matchState.blackDisconnected">({{ formatCountdown(matchState.blackRecoveryRemainingMs) }} để nối lại)</template>
+        </span>
+      </div>
       <div class="board" role="img" :aria-label="`Bàn cờ, lượt đi ${matchState.sideToMove === 'red' ? 'Đỏ' : 'Đen'}`">
         <span
           v-for="piece in matchState.board"
@@ -245,6 +246,8 @@ h2 { margin: 0; font-size: 1.15rem; }
 .error-message { color: #9b4036; }
 .retry-button { margin-bottom: 12px; border: 0; border-radius: 6px; padding: 8px 12px; background: #172b26; color: #fffef9; font: inherit; cursor: pointer; }
 .game-summary { justify-content: flex-start; flex-wrap: wrap; margin: 18px 0 12px; color: #53625b; font-size: .85rem; }
+.player-presence { display: flex; flex-wrap: wrap; gap: 12px; margin: 0 0 12px; color: #276440; font-size: .85rem; }
+.player-presence [data-disconnected="true"] { color: #9b4036; font-weight: 700; }
 .board { position: relative; display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); grid-template-rows: repeat(10, minmax(30px, 1fr)); aspect-ratio: 9 / 10; max-height: 580px; border: 2px solid #8b5a35; background-color: #f3dfb9; }
 .board::before { position: absolute; inset: 5% 5.5556%; background-image: linear-gradient(#9b704b 1px, transparent 1px), linear-gradient(90deg, #9b704b 1px, transparent 1px); background-size: calc(100% / 8) calc(100% / 9); content: ""; pointer-events: none; }
 .piece { z-index: 1; align-self: center; justify-self: center; display: grid; place-items: center; width: min(80%, 42px); aspect-ratio: 1; border: 2px solid currentColor; border-radius: 50%; background: #fff9eb; font-family: serif; font-size: clamp(.85rem, 3vw, 1.2rem); font-weight: 700; }

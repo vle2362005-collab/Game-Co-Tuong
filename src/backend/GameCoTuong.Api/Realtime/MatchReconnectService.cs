@@ -203,8 +203,12 @@ public sealed class MatchReconnectService(GameDbContext db, TimeProvider timePro
             board,
             match.RedDeadlineAt is not null || match.BlackDeadlineAt is not null,
             match.RedDeadlineAt is not null,
+            match.RedDisconnectedAt,
+            match.RedDeadlineAt,
             redRemaining,
             match.BlackDeadlineAt is not null,
+            match.BlackDisconnectedAt,
+            match.BlackDeadlineAt,
             blackRemaining,
             match.Winner,
             match.ResultReason);

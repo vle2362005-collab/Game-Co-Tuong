@@ -5,7 +5,8 @@
 - SignalR hub: `GET /hubs/match`; client gọi `ReconnectMatch(matchId)` sau khi kết nối.
 - Hub chỉ nhận người dùng đã xác thực. ID người dùng lấy từ claim `NameIdentifier` hoặc `sub`, sau đó phải khớp với một `MatchPlayer` của trận được yêu cầu. Không truyền `userId` từ trình duyệt.
 - Nếu thành công, phản hồi `MatchReconnectState` chứa màu của người dùng, trạng thái lượt đi, số nước, bàn cờ đã lưu và thời gian còn lại của từng người.
-- Client lắng nghe `MatchPaused`, `PlayerReconnected` và `MatchEnded`. `MatchPaused` bao gồm snapshot hiện tại và đếm ngược phía máy chủ.
+- Client lắng nghe `PlayerDisconnected`, `PlayerReconnected`, `MatchPaused` và `MatchEnded`. Snapshot presence bao gồm trạng thái, thời điểm mất kết nối và deadline do máy chủ tính.
+- Hub gắn `ConnectionId` với `(MatchId, UserId)` sau khi xác thực quyền tham gia. Chỉ khi kết nối cuối cùng của người chơi trong trận đóng mới đánh dấu mất kết nối. Các chuyển trạng thái reconnect/disconnect của cùng người chơi được tuần tự hóa; callback disconnect cũ sẽ kiểm tra lại kết nối hiện hành trước khi ghi offline.
 - Vue được cung cấp dưới dạng `MatchReconnectPanel`; ứng dụng gọi truyền `matchId` và `accessTokenFactory` từ cơ chế đăng nhập của ứng dụng.
 
 ## Thời hạn và kết quả

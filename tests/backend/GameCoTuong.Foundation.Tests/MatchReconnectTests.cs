@@ -85,4 +85,43 @@ public sealed class MatchReconnectTests
         Assert.Equal(matchId, disconnectedMatchId);
         Assert.Equal(userId, disconnectedUserId);
     }
+
+    [Fact]
+    public async Task Player_transitions_are_serialized_per_match_and_user()
+    {
+        var registry = new MatchConnectionRegistry();
+        var matchId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        using var first = await registry.AcquirePlayerTransitionAsync(
+            matchId, userId, CancellationToken.None);
+
+        var secondTask = registry.AcquirePlayerTransitionAsync(
+            matchId, userId, CancellationToken.None);
+
+        Assert.False(secondTask.IsCompleted);
+
+        first.Dispose();
+        using var second = await secondTask;
+    }
+
+    [Fact]
+    public async Task New_connection_is_visible_when_old_disconnect_rechecks_presence()
+    {
+        var registry = new MatchConnectionRegistry();
+        var matchId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        registry.Track("old-connection", matchId, userId);
+        Assert.True(registry.UntrackLastConnection("old-connection", out _, out _));
+
+        using (var reconnectTransition = await registry.AcquirePlayerTransitionAsync(
+            matchId, userId, CancellationToken.None))
+        {
+            registry.Track("new-connection", matchId, userId);
+        }
+
+        using var oldDisconnectTransition = await registry.AcquirePlayerTransitionAsync(
+            matchId, userId, CancellationToken.None);
+
+        Assert.True(registry.HasConnections(matchId, userId));
+    }
 }
