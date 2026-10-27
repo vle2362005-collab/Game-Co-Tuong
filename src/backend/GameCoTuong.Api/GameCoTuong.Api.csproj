@@ -5,6 +5,10 @@
   <ItemGroup>
     <ProjectReference Include="../GameCoTuong.Application/GameCoTuong.Application.csproj" />
     <ProjectReference Include="../GameCoTuong.Infrastructure/GameCoTuong.Infrastructure.csproj" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
     <Content Update="appsettings.Local.json" CopyToPublishDirectory="Never" />
     <Content Update="appsettings.Local.example.json" CopyToPublishDirectory="Never" />
   </ItemGroup>
