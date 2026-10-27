@@ -5,6 +5,7 @@
   <ItemGroup>
     <ProjectReference Include="../GameCoTuong.Application/GameCoTuong.Application.csproj" />
     <ProjectReference Include="../GameCoTuong.Infrastructure/GameCoTuong.Infrastructure.csproj" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

@@ -40,6 +40,7 @@ public sealed class ApiSmokeTests : IClassFixture<TestApiFactory>
         using var response = await client.SendAsync(request);
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
         Assert.Equal(origin, Assert.Single(response.Headers.GetValues("Access-Control-Allow-Origin")));
+        Assert.Equal("true", Assert.Single(response.Headers.GetValues("Access-Control-Allow-Credentials")));
     }
 
     [Theory]
@@ -59,5 +60,15 @@ public sealed class ApiSmokeTests : IClassFixture<TestApiFactory>
     {
         using var response = await client.GetAsync("/api/v1/rooms");
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Match_hub_requires_an_authenticated_connection()
+    {
+        using var response = await client.PostAsync(
+            "/hubs/matches/negotiate?negotiateVersion=1",
+            new StringContent(""));
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 }
