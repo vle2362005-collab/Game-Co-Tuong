@@ -49,15 +49,18 @@ dotnet restore GameCoTuong.sln --locked-mode -m:1
 dotnet build GameCoTuong.sln -c Release --no-restore -m:1 -p:UseSharedCompilation=false
 dotnet test GameCoTuong.sln -c Release --no-build --no-restore -m:1
 npm --prefix src/frontend ci
+npm --prefix src/frontend run lint
 npm --prefix src/frontend run build
 npm --prefix src/frontend test
 ```
 
 Hoặc chạy `./scripts/verify.sh` trên Bash, `./scripts/verify.ps1` trên PowerShell. Xem [hướng dẫn phát triển](docs/development.md) để đổi cổng, cấu hình, cập nhật lockfile và tạo nhánh. Xem [bàn giao GCT-21](docs/GCT-21-handover.md) để đối chiếu tiêu chí Jira.
 
+PR vào `develop`/`main` được [GCT CI](.github/workflows/ci.yml) build và kiểm thử tự động; mở **Checks** để xem bước lỗi và tải báo cáo. Xem [hướng dẫn CI](docs/ci.md) và [bàn giao GCT-23](docs/GCT-23-handover.md).
+
 ## Tài liệu và quy trình nhóm
 
 - [GCT-19 — phạm vi và nghiệm thu](docs/requirements.md), [luật và giới hạn](docs/rules.md).
 - GCT-15 và GCT-20 đã có ở nhánh `feature/GCT-15-project-foundation`; tại thời điểm tạo GCT-21, các tài liệu đó chưa được tích hợp vào `main`/`develop`. Xem [kiến trúc GCT-20](https://github.com/vle2362005-collab/Game-Co-Tuong/blob/81f65ca67af35adff8c0dbb4d82e7953a3b9b4e0/docs/architecture.md) và [hợp đồng](https://github.com/vle2362005-collab/Game-Co-Tuong/blob/81f65ca67af35adff8c0dbb4d82e7953a3b9b4e0/docs/contracts.md) tại commit đã bàn giao.
 - `main`: bản ổn định; `develop`: nơi nhận thay đổi qua PR; `feature/GCT-<mã>-<nội-dung>`: từng công việc. Sau khi PR GCT-21 được merge, thành viên cập nhật `develop` rồi mới tách nhánh.
-- Trưởng nhóm duyệt và merge. Xem [cách làm việc và mở PR](CONTRIBUTING.md), [quy ước Jira](docs/jira-workflow.md) và [rà soát GCT-22](docs/GCT-22-audit.md). [Bộ cấu hình bảo vệ nhánh](.github/rulesets/README.md) đã chuẩn bị nhưng chưa áp dụng trên GitHub. GCT-23 bổ sung CI.
+- Trưởng nhóm duyệt và merge. Xem [cách làm việc và mở PR](CONTRIBUTING.md), [quy ước Jira](docs/jira-workflow.md), [rà soát GCT-22](docs/GCT-22-audit.md), [cấu hình bảo vệ nhánh](.github/rulesets/README.md) và [CI GCT-23](docs/ci.md).
