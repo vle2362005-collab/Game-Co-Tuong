@@ -49,11 +49,14 @@ dotnet restore GameCoTuong.sln --locked-mode -m:1
 dotnet build GameCoTuong.sln -c Release --no-restore -m:1 -p:UseSharedCompilation=false
 dotnet test GameCoTuong.sln -c Release --no-build --no-restore -m:1
 npm --prefix src/frontend ci
+npm --prefix src/frontend run lint
 npm --prefix src/frontend run build
 npm --prefix src/frontend test
 ```
 
 Hoặc chạy `./scripts/verify.sh` trên Bash, `./scripts/verify.ps1` trên PowerShell. Xem [hướng dẫn phát triển](docs/development.md) để đổi cổng, cấu hình, cập nhật lockfile và tạo nhánh. Xem [bàn giao GCT-21](docs/GCT-21-handover.md) để đối chiếu tiêu chí Jira.
+
+PR vào `develop`/`main` được [GCT CI](.github/workflows/ci.yml) build và kiểm thử tự động; mở **Checks** để xem bước lỗi và tải báo cáo. Xem [hướng dẫn CI](docs/ci.md) và [bàn giao GCT-23](docs/GCT-23-handover.md).
 
 ## Tài liệu và quy trình nhóm
 
