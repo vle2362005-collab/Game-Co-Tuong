@@ -1,22 +1,186 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import type { RegisterPayload } from '../api/auth'
 
-defineProps<{
-  sessionExpired: boolean
-  isSubmitting: boolean
-  errorMessage: string | null
-}>()
+const props = withDefaults(
+  defineProps<{
+    sessionExpired?: boolean
+    isSubmitting?: boolean
+    errorMessage?: string | null
+    fieldErrors?: Record<string, string[]>
+    initialMode?: 'login' | 'register'
+  }>(),
+  {
+    sessionExpired: false,
+    isSubmitting: false,
+    errorMessage: null,
+    fieldErrors: () => ({}),
+    initialMode: 'login'
+  }
+)
 
 const emit = defineEmits<{
   (e: 'login', payload: { username: string; password: string }): void
+  (e: 'register', payload: RegisterPayload): void
 }>()
 
-const username = ref('')
-const password = ref('')
+const route = useRoute()
+const router = useRouter()
 
-function handleSubmit() {
-  if (!username.value || !password.value) return
-  emit('login', { username: username.value, password: password.value })
+const activeTab = ref<'login' | 'register'>('login')
+
+// Login form model
+const loginUsername = ref('')
+const loginPassword = ref('')
+const loginValidationErrors = ref<{ username?: string; password?: string }>({})
+
+// Register form model
+const regUsername = ref('')
+const regDisplayName = ref('')
+const regEmail = ref('')
+const regPassword = ref('')
+const regConfirmPassword = ref('')
+const regValidationErrors = ref<{
+  username?: string
+  displayName?: string
+  email?: string
+  password?: string
+  confirmPassword?: string
+}>({})
+
+// Local submission guard preventing double clicks
+const localSubmitting = ref(false)
+
+onMounted(() => {
+  if (props.initialMode === 'register' || route?.path === '/register' || route?.query?.mode === 'register') {
+    activeTab.value = 'register'
+  }
+})
+
+watch(
+  () => route?.path,
+  (path) => {
+    if (path === '/register') {
+      activeTab.value = 'register'
+    } else if (path === '/login') {
+      activeTab.value = 'login'
+    }
+  }
+)
+
+function switchTab(tab: 'login' | 'register') {
+  activeTab.value = tab
+  loginValidationErrors.value = {}
+  regValidationErrors.value = {}
+  if (router && route) {
+    const targetPath = tab === 'register' ? '/register' : '/login'
+    if (route.path !== targetPath) {
+      router.replace(targetPath)
+    }
+  }
+}
+
+function handleLoginSubmit() {
+  if (props.isSubmitting || localSubmitting.value) return
+
+  loginValidationErrors.value = {}
+  const u = loginUsername.value.trim()
+  const p = loginPassword.value
+
+  let hasError = false
+  if (!u) {
+    loginValidationErrors.value.username = 'Vui lòng nhập tên đăng nhập.'
+    hasError = true
+  }
+  if (!p) {
+    loginValidationErrors.value.password = 'Vui lòng nhập mật khẩu.'
+    hasError = true
+  }
+
+  if (hasError) return
+
+  localSubmitting.value = true
+  emit('login', { username: u, password: p })
+
+  // Re-enable in next tick or when prop changes
+  setTimeout(() => {
+    localSubmitting.value = false
+  }, 1000)
+}
+
+function handleRegisterSubmit() {
+  if (props.isSubmitting || localSubmitting.value) return
+
+  regValidationErrors.value = {}
+  const u = regUsername.value.trim()
+  const d = regDisplayName.value.trim()
+  const e = regEmail.value.trim()
+  const p = regPassword.value
+  const cp = regConfirmPassword.value
+
+  let hasError = false
+
+  if (!u) {
+    regValidationErrors.value.username = 'Vui lòng nhập tên đăng nhập.'
+    hasError = true
+  } else if (u.length < 3 || u.length > 30) {
+    regValidationErrors.value.username = 'Tên đăng nhập phải từ 3 đến 30 ký tự.'
+    hasError = true
+  } else if (!/^[a-zA-Z0-9_]+$/.test(u)) {
+    regValidationErrors.value.username = 'Tên đăng nhập chỉ chứa chữ cái, số và dấu gạch dưới.'
+    hasError = true
+  }
+
+  if (!d) {
+    regValidationErrors.value.displayName = 'Vui lòng nhập biệt danh hiển thị.'
+    hasError = true
+  }
+
+  if (!e) {
+    regValidationErrors.value.email = 'Vui lòng nhập địa chỉ email.'
+    hasError = true
+  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) {
+    regValidationErrors.value.email = 'Địa chỉ email không đúng định dạng.'
+    hasError = true
+  }
+
+  if (!p) {
+    regValidationErrors.value.password = 'Vui lòng nhập mật khẩu.'
+    hasError = true
+  } else if (p.length < 6) {
+    regValidationErrors.value.password = 'Mật khẩu phải có ít nhất 6 ký tự.'
+    hasError = true
+  }
+
+  if (!cp) {
+    regValidationErrors.value.confirmPassword = 'Vui lòng xác nhận lại mật khẩu.'
+    hasError = true
+  } else if (p !== cp) {
+    regValidationErrors.value.confirmPassword = 'Mật khẩu xác nhận không khớp.'
+    hasError = true
+  }
+
+  if (hasError) return
+
+  localSubmitting.value = true
+  emit('register', {
+    username: u,
+    displayName: d,
+    email: e,
+    password: p
+  })
+
+  setTimeout(() => {
+    localSubmitting.value = false
+  }, 1000)
+}
+
+function getFieldError(fieldName: string): string | null {
+  if (props.fieldErrors && props.fieldErrors[fieldName]?.length) {
+    return props.fieldErrors[fieldName][0]
+  }
+  return null
 }
 </script>
 
@@ -36,52 +200,218 @@ function handleSubmit() {
       </div>
     </div>
 
-    <div class="login-card">
-      <div class="login-header">
+    <div class="auth-card">
+      <div class="auth-header">
         <span class="mark-small" aria-hidden="true">帥</span>
-        <h2>Đăng nhập tài khoản</h2>
-        <p class="subtitle">Nhập thông tin tài khoản để truy cập phòng cờ</p>
+        <h2>Cờ Tướng Trực Tuyến</h2>
+        <p class="subtitle">Đấu trí kỳ nghệ · Giao lưu kỳ thủ bốn phương</p>
       </div>
 
+      <!-- Tab Switcher -->
+      <div class="tab-switcher" role="tablist">
+        <button
+          type="button"
+          class="tab-btn"
+          :class="{ active: activeTab === 'login' }"
+          id="tab-login"
+          role="tab"
+          :aria-selected="activeTab === 'login'"
+          @click="switchTab('login')"
+        >
+          Đăng nhập
+        </button>
+        <button
+          type="button"
+          class="tab-btn"
+          :class="{ active: activeTab === 'register' }"
+          id="tab-register"
+          role="tab"
+          :aria-selected="activeTab === 'register'"
+          @click="switchTab('register')"
+        >
+          Đăng ký tài khoản
+        </button>
+      </div>
+
+      <!-- General Error Banner -->
       <div v-if="errorMessage" class="error-banner" role="alert">
-        {{ errorMessage }}
+        <span>⚠️ {{ errorMessage }}</span>
       </div>
 
-      <form @submit.prevent="handleSubmit">
+      <!-- ================= LOGIN FORM ================= -->
+      <form v-if="activeTab === 'login'" id="login-form" @submit.prevent="handleLoginSubmit">
         <div class="form-group">
-          <label for="login-username">Tên đăng nhập</label>
+          <label for="login-username">Tên đăng nhập <span class="required">*</span></label>
           <input
             id="login-username"
-            v-model="username"
+            v-model="loginUsername"
             type="text"
-            required
             placeholder="Ví dụ: kythucotuong"
             autocomplete="username"
-            :disabled="isSubmitting"
+            :disabled="isSubmitting || localSubmitting"
+            :class="{ 'input-error': loginValidationErrors.username || getFieldError('username') }"
           />
+          <span
+            v-if="loginValidationErrors.username || getFieldError('username')"
+            class="field-error"
+            id="login-username-error"
+            role="alert"
+          >
+            {{ loginValidationErrors.username || getFieldError('username') }}
+          </span>
         </div>
 
         <div class="form-group">
-          <label for="login-password">Mật khẩu</label>
+          <label for="login-password">Mật khẩu <span class="required">*</span></label>
           <input
             id="login-password"
-            v-model="password"
+            v-model="loginPassword"
             type="password"
-            required
             placeholder="••••••••"
             autocomplete="current-password"
-            :disabled="isSubmitting"
+            :disabled="isSubmitting || localSubmitting"
+            :class="{ 'input-error': loginValidationErrors.password || getFieldError('password') }"
           />
+          <span
+            v-if="loginValidationErrors.password || getFieldError('password')"
+            class="field-error"
+            id="login-password-error"
+            role="alert"
+          >
+            {{ loginValidationErrors.password || getFieldError('password') }}
+          </span>
         </div>
 
         <button
           type="submit"
           class="submit-btn"
           id="login-submit-btn"
-          :disabled="isSubmitting || !username.trim() || !password"
+          :disabled="isSubmitting || localSubmitting || !loginUsername.trim() || !loginPassword"
         >
-          <span v-if="isSubmitting">Đang đăng nhập…</span>
-          <span v-else>Đăng nhập vào game</span>
+          <span v-if="isSubmitting || localSubmitting" class="btn-loading">
+            <span class="spinner-small"></span> Đang đăng nhập…
+          </span>
+          <span v-else>Đăng nhập vào game ⚔️</span>
+        </button>
+      </form>
+
+      <!-- ================= REGISTER FORM ================= -->
+      <form v-else id="register-form" @submit.prevent="handleRegisterSubmit">
+        <div class="form-group">
+          <label for="register-username">Tên đăng nhập <span class="required">*</span></label>
+          <input
+            id="register-username"
+            v-model="regUsername"
+            type="text"
+            placeholder="Từ 3-30 ký tự (chữ cái, số, gạch dưới)"
+            autocomplete="username"
+            :disabled="isSubmitting || localSubmitting"
+            :class="{ 'input-error': regValidationErrors.username || getFieldError('username') }"
+          />
+          <span
+            v-if="regValidationErrors.username || getFieldError('username')"
+            class="field-error"
+            id="register-username-error"
+            role="alert"
+          >
+            {{ regValidationErrors.username || getFieldError('username') }}
+          </span>
+        </div>
+
+        <div class="form-group">
+          <label for="register-displayName">Biệt danh hiển thị <span class="required">*</span></label>
+          <input
+            id="register-displayName"
+            v-model="regDisplayName"
+            type="text"
+            placeholder="Ví dụ: Kỳ Thánh Sông Hàn"
+            autocomplete="nickname"
+            :disabled="isSubmitting || localSubmitting"
+            :class="{ 'input-error': regValidationErrors.displayName || getFieldError('displayName') }"
+          />
+          <span
+            v-if="regValidationErrors.displayName || getFieldError('displayName')"
+            class="field-error"
+            id="register-displayName-error"
+            role="alert"
+          >
+            {{ regValidationErrors.displayName || getFieldError('displayName') }}
+          </span>
+        </div>
+
+        <div class="form-group">
+          <label for="register-email">Địa chỉ Email <span class="required">*</span></label>
+          <input
+            id="register-email"
+            v-model="regEmail"
+            type="email"
+            placeholder="name@example.com"
+            autocomplete="email"
+            :disabled="isSubmitting || localSubmitting"
+            :class="{ 'input-error': regValidationErrors.email || getFieldError('email') }"
+          />
+          <span
+            v-if="regValidationErrors.email || getFieldError('email')"
+            class="field-error"
+            id="register-email-error"
+            role="alert"
+          >
+            {{ regValidationErrors.email || getFieldError('email') }}
+          </span>
+        </div>
+
+        <div class="form-group">
+          <label for="register-password">Mật khẩu <span class="required">*</span></label>
+          <input
+            id="register-password"
+            v-model="regPassword"
+            type="password"
+            placeholder="Tối thiểu 6 ký tự"
+            autocomplete="new-password"
+            :disabled="isSubmitting || localSubmitting"
+            :class="{ 'input-error': regValidationErrors.password || getFieldError('password') }"
+          />
+          <span
+            v-if="regValidationErrors.password || getFieldError('password')"
+            class="field-error"
+            id="register-password-error"
+            role="alert"
+          >
+            {{ regValidationErrors.password || getFieldError('password') }}
+          </span>
+        </div>
+
+        <div class="form-group">
+          <label for="register-confirmPassword">Xác nhận mật khẩu <span class="required">*</span></label>
+          <input
+            id="register-confirmPassword"
+            v-model="regConfirmPassword"
+            type="password"
+            placeholder="Nhập lại mật khẩu"
+            autocomplete="new-password"
+            :disabled="isSubmitting || localSubmitting"
+            :class="{ 'input-error': regValidationErrors.confirmPassword }"
+          />
+          <span
+            v-if="regValidationErrors.confirmPassword"
+            class="field-error"
+            id="register-confirmPassword-error"
+            role="alert"
+          >
+            {{ regValidationErrors.confirmPassword }}
+          </span>
+        </div>
+
+        <button
+          type="submit"
+          class="submit-btn"
+          id="register-submit-btn"
+          :disabled="isSubmitting || localSubmitting || !regUsername.trim() || !regPassword || !regEmail.trim()"
+        >
+          <span v-if="isSubmitting || localSubmitting" class="btn-loading">
+            <span class="spinner-small"></span> Đang tạo tài khoản…
+          </span>
+          <span v-else>Tạo tài khoản & Vào sảnh 📜</span>
         </button>
       </form>
     </div>
@@ -90,7 +420,7 @@ function handleSubmit() {
 
 <style scoped>
 .login-wrapper {
-  max-width: 440px;
+  max-width: 460px;
   margin: 32px auto;
   display: flex;
   flex-direction: column;
@@ -127,7 +457,7 @@ function handleSubmit() {
   color: #8b3a32;
 }
 
-.login-card {
+.auth-card {
   background: #fffef9;
   border: 1px solid #d6dcd0;
   border-radius: 16px;
@@ -135,9 +465,9 @@ function handleSubmit() {
   box-shadow: 0 4px 16px rgba(23, 43, 38, 0.05);
 }
 
-.login-header {
+.auth-header {
   text-align: center;
-  margin-bottom: 24px;
+  margin-bottom: 20px;
 }
 
 .mark-small {
@@ -151,6 +481,7 @@ function handleSubmit() {
   font-size: 1.4rem;
   font-weight: bold;
   margin-bottom: 12px;
+  background: #fffdfa;
 }
 
 h2 {
@@ -162,26 +493,53 @@ h2 {
 }
 
 .subtitle {
-  font-size: 0.88rem;
+  font-size: 0.86rem;
   color: #65746d;
   margin: 0;
+}
+
+.tab-switcher {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: #f1ede3;
+  border-radius: 10px;
+  padding: 4px;
+  margin-bottom: 22px;
+}
+
+.tab-btn {
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  padding: 9px 12px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #53625b;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.tab-btn.active {
+  background: #fffef9;
+  color: #9b4036;
+  box-shadow: 0 2px 6px rgba(23, 43, 38, 0.08);
 }
 
 .error-banner {
   background: #fdf3f2;
   color: #9b4036;
   border: 1px solid #eccbc8;
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 10px 14px;
   font-size: 0.86rem;
-  margin-bottom: 16px;
+  margin-bottom: 18px;
 }
 
 .form-group {
-  margin-bottom: 18px;
+  margin-bottom: 16px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
   text-align: left;
 }
 
@@ -191,6 +549,10 @@ label {
   color: #172b26;
 }
 
+.required {
+  color: #9b4036;
+}
+
 input {
   padding: 11px 14px;
   font-size: 0.95rem;
@@ -198,18 +560,31 @@ input {
   border-radius: 8px;
   background: #faf9f5;
   color: #172b26;
-  transition: border-color 0.2s;
+  transition: all 0.2s;
 }
 
 input:focus {
   outline: none;
   border-color: #9b4036;
   background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(155, 64, 54, 0.1);
+}
+
+input.input-error {
+  border-color: #9b4036;
+  background: #fffcfb;
+}
+
+.field-error {
+  color: #9b4036;
+  font-size: 0.78rem;
+  font-weight: 500;
+  margin-top: 2px;
 }
 
 .submit-btn {
   width: 100%;
-  background: #172b26;
+  background: #9b4036;
   color: #fffef9;
   border: none;
   border-radius: 8px;
@@ -220,16 +595,36 @@ input:focus {
   display: grid;
   place-items: center;
   transition: background 0.2s;
-  margin-top: 8px;
+  margin-top: 10px;
 }
 
 .submit-btn:hover:not(:disabled) {
-  background: #2d4940;
+  background: #b84f43;
 }
 
 .submit-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.btn-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.spinner-small {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #fffef9;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  display: inline-block;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 @keyframes slideDown {

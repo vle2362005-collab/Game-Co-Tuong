@@ -20,6 +20,13 @@ export const routes: RouteRecordRaw[] = [
     meta: { title: 'Đăng nhập' }
   },
   {
+    path: '/register',
+    name: 'register',
+    component: LoginView,
+    props: { initialMode: 'register' },
+    meta: { title: 'Đăng ký tài khoản' }
+  },
+  {
     path: '/lobby',
     name: 'lobby',
     component: LobbyView,
@@ -104,7 +111,7 @@ export function createAppRouter(options: RouterOptions = {}): Router {
       return
     }
 
-    if (to.path === '/login' && authenticated) {
+    if ((to.path === '/login' || to.path === '/register') && authenticated) {
       next('/lobby')
       return
     }

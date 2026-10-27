@@ -1,6 +1,6 @@
 import { ref, computed } from 'vue'
 import type { User, AuthSession, MatchInfo, AppView } from '../types/auth'
-import { loginApi, logoutApi } from '../api/auth'
+import { loginApi, registerApi, logoutApi, AuthApiError, type RegisterPayload } from '../api/auth'
 
 const STORAGE_TOKEN_KEY = 'gct_token'
 const STORAGE_USER_KEY = 'gct_user'
@@ -30,6 +30,7 @@ export function createAuthStore(apiBaseUrl: string = 'http://localhost:5000') {
   const sessionExpired = ref<boolean>(false)
   const isSubmitting = ref<boolean>(false)
   const errorMessage = ref<string | null>(null)
+  const fieldErrors = ref<Record<string, string[]>>({})
 
   // In-game state
   const activeMatch = ref<MatchInfo | null>(null)
@@ -45,6 +46,8 @@ export function createAuthStore(apiBaseUrl: string = 'http://localhost:5000') {
     token.value = session.accessToken
     user.value = session.user
     sessionExpired.value = false
+    fieldErrors.value = {}
+    errorMessage.value = null
     try {
       localStorage.setItem(STORAGE_TOKEN_KEY, session.accessToken)
       localStorage.setItem(STORAGE_USER_KEY, JSON.stringify(session.user))
@@ -67,15 +70,47 @@ export function createAuthStore(apiBaseUrl: string = 'http://localhost:5000') {
   }
 
   async function login(username: string, password: string): Promise<boolean> {
+    if (isSubmitting.value) return false
     isSubmitting.value = true
     errorMessage.value = null
+    fieldErrors.value = {}
     try {
       const session = await loginApi(apiBaseUrl, username, password)
       saveSession(session)
       currentView.value = 'lobby'
       return true
     } catch (err: unknown) {
-      errorMessage.value = err instanceof Error ? err.message : 'Đăng nhập không thành công.'
+      if (err instanceof AuthApiError) {
+        errorMessage.value = err.message
+        fieldErrors.value = err.fieldErrors || {}
+      } else {
+        errorMessage.value = err instanceof Error ? err.message : 'Đăng nhập không thành công.'
+      }
+      return false
+    } finally {
+      isSubmitting.value = false
+    }
+  }
+
+  async function register(payload: RegisterPayload): Promise<boolean> {
+    if (isSubmitting.value) return false
+    isSubmitting.value = true
+    errorMessage.value = null
+    fieldErrors.value = {}
+    try {
+      await registerApi(apiBaseUrl, payload)
+      // Tự động đăng nhập vào sảnh sau khi đăng ký thành công
+      const session = await loginApi(apiBaseUrl, payload.username, payload.password)
+      saveSession(session)
+      currentView.value = 'lobby'
+      return true
+    } catch (err: unknown) {
+      if (err instanceof AuthApiError) {
+        errorMessage.value = err.message
+        fieldErrors.value = err.fieldErrors || {}
+      } else {
+        errorMessage.value = err instanceof Error ? err.message : 'Đăng ký không thành công.'
+      }
       return false
     } finally {
       isSubmitting.value = false
@@ -147,11 +182,13 @@ export function createAuthStore(apiBaseUrl: string = 'http://localhost:5000') {
     sessionExpired,
     isSubmitting,
     errorMessage,
+    fieldErrors,
     activeMatch,
     showSurrenderModal,
     isAuthenticated,
     isPlaying,
     login,
+    register,
     requestLogout,
     cancelLogout,
     confirmSurrenderAndLogout,

@@ -1,5 +1,30 @@
 import type { AuthSession, User } from '../types/auth'
 
+export class AuthApiError extends Error {
+  constructor(
+    message: string,
+    public code: string = 'AUTH_ERROR',
+    public status: number = 400,
+    public fieldErrors: Record<string, string[]> = {}
+  ) {
+    super(message)
+    this.name = 'AuthApiError'
+  }
+}
+
+export interface RegisterPayload {
+  username: string
+  displayName: string
+  email: string
+  password: string
+}
+
+export interface RegisterResult {
+  id: string
+  username: string
+  displayName: string
+}
+
 export async function loginApi(
   baseUrl: string,
   username: string,
@@ -15,7 +40,7 @@ export async function loginApi(
     },
     body: JSON.stringify({
       requestId: crypto.randomUUID(),
-      username,
+      username: username.trim(),
       password
     }),
     signal
@@ -23,19 +48,78 @@ export async function loginApi(
 
   if (!response.ok) {
     let errorMessage = `Đăng nhập thất bại (${response.status})`
+    let errorCode = `HTTP_${response.status}`
+    let fieldErrors: Record<string, string[]> = {}
+
     try {
       const errorData = await response.json()
       if (errorData?.error?.message) {
         errorMessage = errorData.error.message
       }
+      if (errorData?.error?.code) {
+        errorCode = errorData.error.code
+      }
+      if (errorData?.error?.fieldErrors) {
+        fieldErrors = errorData.error.fieldErrors
+      }
     } catch {
       // Ignore json parse error
     }
-    throw new Error(errorMessage)
+
+    throw new AuthApiError(errorMessage, errorCode, response.status, fieldErrors)
   }
 
   const result = await response.json()
   return result.data as AuthSession
+}
+
+export async function registerApi(
+  baseUrl: string,
+  payload: RegisterPayload,
+  signal?: AbortSignal
+): Promise<RegisterResult> {
+  const url = new URL('/api/v1/auth/register', baseUrl)
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json'
+    },
+    body: JSON.stringify({
+      requestId: crypto.randomUUID(),
+      username: payload.username.trim(),
+      displayName: payload.displayName.trim(),
+      email: payload.email.trim(),
+      password: payload.password
+    }),
+    signal
+  })
+
+  if (!response.ok) {
+    let errorMessage = `Đăng ký thất bại (${response.status})`
+    let errorCode = `HTTP_${response.status}`
+    let fieldErrors: Record<string, string[]> = {}
+
+    try {
+      const errorData = await response.json()
+      if (errorData?.error?.message) {
+        errorMessage = errorData.error.message
+      }
+      if (errorData?.error?.code) {
+        errorCode = errorData.error.code
+      }
+      if (errorData?.error?.fieldErrors) {
+        fieldErrors = errorData.error.fieldErrors
+      }
+    } catch {
+      // Ignore json parse error
+    }
+
+    throw new AuthApiError(errorMessage, errorCode, response.status, fieldErrors)
+  }
+
+  const result = await response.json()
+  return result.data as RegisterResult
 }
 
 export async function logoutApi(

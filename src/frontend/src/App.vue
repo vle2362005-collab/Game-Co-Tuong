@@ -5,6 +5,7 @@ import { useAuth } from './composables/useAuth'
 import AppHeader from './components/AppHeader.vue'
 import SurrenderModal from './components/SurrenderModal.vue'
 import type { MatchInfo } from './types/auth'
+import type { RegisterPayload } from './api/auth'
 
 const route = useRoute()
 const router = useRouter()
@@ -21,6 +22,14 @@ const defaultMatch = computed<MatchInfo>(() => auth.activeMatch.value || {
 
 async function handleLogin(payload: { username: string; password: string }) {
   const ok = await auth.login(payload.username, payload.password)
+  if (ok && router) {
+    const redirect = (route?.query?.redirect as string) || '/lobby'
+    router.push(redirect)
+  }
+}
+
+async function handleRegister(payload: RegisterPayload) {
+  const ok = await auth.register(payload)
   if (ok && router) {
     const redirect = (route?.query?.redirect as string) || '/lobby'
     router.push(redirect)
@@ -95,8 +104,10 @@ watch(
           :session-expired="auth.sessionExpired.value"
           :is-submitting="auth.isSubmitting.value"
           :error-message="auth.errorMessage.value"
+          :field-errors="auth.fieldErrors.value"
           :match="defaultMatch"
           @login="handleLogin"
+          @register="handleRegister"
           @enter-match="handleEnterMatch"
           @start-match="handleStartMatch"
           @leave-room="handleLeaveMatch"
@@ -115,7 +126,7 @@ watch(
 
     <footer>
       <span>Vue 3 · Vue Router 4 · TypeScript · ASP.NET Core</span>
-      <span>Dự án Game Cờ Tướng · Nhánh GCT-32-vue-shell</span>
+      <span>Dự án Game Cờ Tướng · Nhánh GCT-33-auth-forms</span>
     </footer>
   </main>
 </template>
