@@ -1,4 +1,3 @@
-using System.Net.Mail;
 using GameCoTuong.Application.Auth.Models;
 
 namespace GameCoTuong.Application.Auth.Validation;
@@ -129,7 +128,7 @@ public static class RegisterRequestValidator
             return false;
         }
 
-        return MailAddress.TryCreate(email, out var mailAddress) && mailAddress.Address == email;
+        return true;
     }
 
     private static void AddError(Dictionary<string, List<string>> errors, string field, string message)
