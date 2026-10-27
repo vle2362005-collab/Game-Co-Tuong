@@ -1,3 +1,4 @@
+using GameCoTuong.Application.Services;
 using GameCoTuong.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -9,6 +10,9 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
+        services.AddSingleton<ReconnectTimeoutRegistry>();
+        services.AddSingleton<MatchReconnectService>();
+
         var connectionString = configuration.GetConnectionString("GameDatabase");
         if (!string.IsNullOrEmpty(connectionString))
         {
