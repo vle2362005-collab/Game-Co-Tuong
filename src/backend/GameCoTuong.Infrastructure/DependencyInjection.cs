@@ -20,7 +20,23 @@ public static class DependencyInjection
                 sql.MigrationsAssembly(typeof(GameDbContext).Assembly.FullName)));
 
         services.AddSingleton<IPasswordHasher, PasswordHasher>();
+        services.Configure<JwtOptions>(options =>
+        {
+            var section = configuration.GetSection(JwtOptions.SectionName);
+            var issuer = section["Issuer"];
+            if (!string.IsNullOrEmpty(issuer)) options.Issuer = issuer;
+            var audience = section["Audience"];
+            if (!string.IsNullOrEmpty(audience)) options.Audience = audience;
+            var signingKey = section["SigningKey"];
+            if (!string.IsNullOrEmpty(signingKey)) options.SigningKey = signingKey;
+            if (int.TryParse(section["ExpirationMinutes"], out var exp) && exp > 0)
+            {
+                options.ExpirationMinutes = exp;
+            }
+        });
+        services.AddSingleton<ITokenService, JwtTokenService>();
         services.AddScoped<IRegistrationService, RegistrationService>();
+        services.AddScoped<ILoginService, LoginService>();
 
         return services;
     }

@@ -45,6 +45,7 @@ app.MapHealthChecks("/health", new HealthCheckOptions
 });
 
 app.MapAuthEndpoints();
+app.MapUserEndpoints();
 
 app.Run();
 
