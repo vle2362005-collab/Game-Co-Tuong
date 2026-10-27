@@ -1,4 +1,5 @@
 using GameCoTuong.Api.Configuration;
+using GameCoTuong.Api.Endpoints;
 using GameCoTuong.Infrastructure;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
@@ -42,6 +43,8 @@ app.MapHealthChecks("/health", new HealthCheckOptions
         service = "game-co-tuong-api"
     }, context.RequestAborted)
 });
+
+app.MapAuthEndpoints();
 
 app.Run();
 
