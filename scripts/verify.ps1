@@ -9,6 +9,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Backend tests failed.' }
     npm --prefix src/frontend ci
     if ($LASTEXITCODE -ne 0) { throw 'Frontend restore failed.' }
+    npm --prefix src/frontend run lint
+    if ($LASTEXITCODE -ne 0) { throw 'Frontend lint failed.' }
     npm --prefix src/frontend run build
     if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed.' }
     npm --prefix src/frontend test

@@ -4,11 +4,11 @@ using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace GameCoTuong.Foundation.Tests;
 
-public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>>
+public sealed class ApiSmokeTests : IClassFixture<TestApiFactory>
 {
     private readonly HttpClient client;
 
-    public ApiSmokeTests(WebApplicationFactory<Program> factory)
+    public ApiSmokeTests(TestApiFactory factory)
     {
         client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
