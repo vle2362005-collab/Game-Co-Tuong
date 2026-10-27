@@ -4,6 +4,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../GameCoTuong.Application/GameCoTuong.Application.csproj" />
+    <ProjectReference Include="../GameCoTuong.Engine/GameCoTuong.Engine.csproj" />
     <ProjectReference Include="../GameCoTuong.Infrastructure/GameCoTuong.Infrastructure.csproj" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
       <PrivateAssets>all</PrivateAssets>

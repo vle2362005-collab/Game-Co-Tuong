@@ -622,6 +622,7 @@
         "type": "Project",
         "dependencies": {
           "GameCoTuong.Application": "[1.0.0, )",
+          "GameCoTuong.Engine": "[1.0.0, )",
           "GameCoTuong.Infrastructure": "[1.0.0, )"
         }
       },

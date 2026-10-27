@@ -1,4 +1,5 @@
 using GameCoTuong.Api.Configuration;
+using GameCoTuong.Api.Realtime;
 using GameCoTuong.Infrastructure;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
@@ -22,16 +23,27 @@ builder.Services.AddOptions<BrowserClientOptions>()
 builder.Services.AddCors(options => options.AddPolicy("Frontend", policy =>
 {
     var origins = builder.Configuration.GetSection("BrowserClient:AllowedOrigins").Get<string[]>() ?? [];
-    policy.WithOrigins(origins).AllowAnyHeader().AllowAnyMethod();
+    policy.WithOrigins(origins).AllowAnyHeader().AllowAnyMethod().AllowCredentials();
 }));
 builder.Services.AddProblemDetails();
 builder.Services.AddHealthChecks();
 builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddAuthentication();
+builder.Services.AddAuthorization();
+
+var reconnectEnabled = !string.IsNullOrWhiteSpace(builder.Configuration.GetConnectionString("GameDatabase"));
+if (reconnectEnabled)
+{
+    builder.Services.AddSignalR();
+    builder.Services.AddMatchReconnect();
+}
 
 var app = builder.Build();
 _ = app.Services.GetRequiredService<IOptions<BrowserClientOptions>>().Value;
 app.UseExceptionHandler();
 app.UseCors("Frontend");
+app.UseAuthentication();
+app.UseAuthorization();
 
 // Process liveness only: this does not claim that SQL Server or game services are ready.
 app.MapHealthChecks("/health", new HealthCheckOptions
@@ -42,6 +54,13 @@ app.MapHealthChecks("/health", new HealthCheckOptions
         service = "game-co-tuong-api"
     }, context.RequestAborted)
 });
+
+if (reconnectEnabled)
+{
+    app.MapHub<MatchHub>("/hubs/match")
+        .RequireCors("Frontend")
+        .RequireAuthorization();
+}
 
 app.Run();
 

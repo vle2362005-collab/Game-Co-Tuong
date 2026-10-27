@@ -50,7 +50,7 @@ Kỳ vọng JSON `{"status":"Healthy","service":"game-co-tuong-api"}`. Endpoint 
 
 Chạy mặc định không cần file riêng. Khi cần đổi địa chỉ API, sao chép `src/frontend/.env.example` thành `src/frontend/.env.local`, sửa URL rồi khởi động lại Vite; khi build lại phải chạy `npm run build`. Tất cả biến `VITE_` nằm trong bundle công khai: không đặt mật khẩu, signing key hay connection string ở frontend.
 
-Backend đọc theo thứ tự ưu tiên tăng dần: cấu hình mặc định theo môi trường → `appsettings.Local.json` → user-secrets ở Development → biến môi trường → tham số dòng lệnh. Có thể sao chép `appsettings.Local.example.json` thành `appsettings.Local.json` trong project API. Cấu hình DB/JWT trong file mẫu dành cho task sau; hiện chưa được dùng. Chuỗi kết nối dùng Windows Integrated Security, không chứa mật khẩu; SigningKey trống có chủ đích, không có key mặc định để dùng nhầm.
+Backend đọc theo thứ tự ưu tiên tăng dần: cấu hình mặc định theo môi trường → `appsettings.Local.json` → user-secrets ở Development → biến môi trường → tham số dòng lệnh. Có thể sao chép `appsettings.Local.example.json` thành `appsettings.Local.json` trong project API. Cấu hình DB được dùng cho EF Core và hub nối lại GCT-109; JWT/sign-in vẫn chưa được triển khai. Chuỗi kết nối dùng Windows Integrated Security, không chứa mật khẩu; SigningKey trống có chủ đích, không có key mặc định để dùng nhầm.
 
 Khi GCT-26/28 cần dữ liệu bí mật, dùng user-secrets ở máy phát triển hoặc biến môi trường. Các file `.env*`, `appsettings.Local.json`, chứng thư/khóa riêng đã bị `.gitignore` loại trừ; file `.env.example` và `appsettings.Local.example.json` vẫn theo dõi trong Git. File cấu hình Local không được copy khi publish.
 
@@ -61,13 +61,13 @@ $env:ASPNETCORE_ENVIRONMENT = "Development"
 dotnet run --project src/backend/GameCoTuong.Api -c Release --no-build --no-restore --no-launch-profile --urls http://localhost:5001
 ```
 
-Sau đó sửa `VITE_API_BASE_URL=http://localhost:5001`. Nếu đổi origin frontend, đặt `BrowserClient__AllowedOrigins__0` tương ứng hoặc thêm vào appsettings.Local.json. Origin phải có scheme + host + port, không có đường dẫn, dấu `/` cuối, ký tự `*` hoặc thông tin đăng nhập. API chỉ cho phép hai origin phát triển mặc định, không bật cookie credentials. CORS là quy tắc trình duyệt, không thay thế xác thực. Xác thực và SignalR được triển khai ở task riêng.
+Sau đó sửa `VITE_API_BASE_URL=http://localhost:5001`. Nếu đổi origin frontend, đặt `BrowserClient__AllowedOrigins__0` tương ứng hoặc thêm vào appsettings.Local.json. Origin phải có scheme + host + port, không có đường dẫn, dấu `/` cuối, ký tự `*` hoặc thông tin đăng nhập. API chỉ cho phép hai origin phát triển mặc định; credentials CORS chỉ cho phép các origin chính xác này để SignalR negotiate. CORS không thay thế xác thực. Xem [GCT-109 — Kết nối lại](GCT-109-reconnect.md) về yêu cầu đăng nhập và cấu hình database.
 
 ## 4. Phụ thuộc và lockfile
 
 - `Api → Application + Infrastructure`; `Application → Domain + Engine`; `Infrastructure → Application + Domain`; `Engine → Domain`; Domain không tham chiếu project khác.
 - Domain và Engine không dùng ASP.NET Core, EF Core, HTTP hoặc SignalR. Luật đi quân bắt đầu ở GCT-42 trở đi. Các AssemblyMarker đánh dấu project nền, chưa có engine hoạt động.
-- EF Core/DbContext/migration đặt trong Infrastructure tại GCT-26. REST/Hub gọi use case chung trong Application theo GCT-20; chưa tạo các endpoint nghiệp vụ giả.
+- EF Core/DbContext/migration đặt trong Infrastructure. Hub nối lại GCT-109 dùng dữ liệu `Match`/`MatchPlayer` đã lưu; đăng nhập và luồng chơi vẫn chưa được nối vào scaffold.
 - Package .NET đặt version tập trung tại `Directory.Packages.props`; `packages.lock.json` được commit theo từng project. Lần clone dùng `dotnet restore --locked-mode`. Khi đổi package, sửa props rồi `dotnet restore --force-evaluate`, review lockfile và chạy lại build/test.
 - Frontend pin trực tiếp dependency và commit `package-lock.json`; dùng `npm ci`. Khi đổi package dùng `npm install <tên>@<version> --save-exact` hoặc `-D`, review diff và kiểm tra lại. Không xóa lockfile để né lỗi restore.
 - Không commit bin, obj, node_modules, dist hoặc TestResults. Không sửa solution để trỏ tới đường dẫn tuyệt đối trên máy mình.
