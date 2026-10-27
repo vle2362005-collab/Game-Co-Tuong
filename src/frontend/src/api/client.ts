@@ -29,6 +29,21 @@ export class ApiClientError extends Error {
   }
 }
 
+let globalTokenGetter: (() => string | null) | null = null
+let globalUnauthorizedHandler: (() => void) | null = null
+
+export function setApiAuthHandlers(getToken: () => string | null, onUnauthorized?: () => void) {
+  globalTokenGetter = getToken
+  if (onUnauthorized) {
+    globalUnauthorizedHandler = onUnauthorized
+  }
+}
+
+export function clearApiAuthHandlers() {
+  globalTokenGetter = null
+  globalUnauthorizedHandler = null
+}
+
 export function createApiClient(config: ApiClientConfig = {}) {
   const getBaseUrl = (): string => {
     if (config.baseUrl) return config.baseUrl
@@ -85,7 +100,9 @@ export function createApiClient(config: ApiClientConfig = {}) {
 
         // Attach Authorization header if token exists and skipAuth is not set
         if (!options.skipAuth && !headers.has('Authorization')) {
-          const token = config.getToken ? config.getToken() : null
+          const token = config.getToken
+            ? config.getToken()
+            : (globalTokenGetter ? globalTokenGetter() : null)
           if (token) {
             headers.set('Authorization', `Bearer ${token}`)
           }
@@ -117,6 +134,8 @@ export function createApiClient(config: ApiClientConfig = {}) {
         if (response.status === 401) {
           if (config.onUnauthorized) {
             config.onUnauthorized()
+          } else if (globalUnauthorizedHandler) {
+            globalUnauthorizedHandler()
           }
         }
 

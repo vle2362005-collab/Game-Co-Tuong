@@ -11,6 +11,7 @@ import LobbyView from '../components/LobbyView.vue'
 import RoomView from '../components/RoomView.vue'
 import GameView from '../components/GameView.vue'
 import HistoryView from '../components/HistoryView.vue'
+import { useAuth } from '../composables/useAuth'
 
 export const routes: RouteRecordRaw[] = [
   {
@@ -75,7 +76,8 @@ export const routes: RouteRecordRaw[] = [
 
 export function checkAuthToken(): boolean {
   try {
-    return !!localStorage.getItem('gct_token')
+    const auth = useAuth()
+    return auth.isAuthenticated.value
   } catch {
     return false
   }
@@ -104,6 +106,10 @@ export function createAppRouter(options: RouterOptions = {}): Router {
     const authenticated = isAuth()
 
     if (to.meta.requiresAuth && !authenticated) {
+      if (to.path === '/login') {
+        next()
+        return
+      }
       next({
         path: '/login',
         query: { redirect: to.fullPath }

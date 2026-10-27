@@ -59,7 +59,8 @@ describe('GCT-7: Đăng xuất và xử lý phiên hết hạn', () => {
 
     expect(auth.isAuthenticated.value).toBe(true)
     expect(auth.token.value).toBe(mockSession.accessToken)
-    expect(localStorage.getItem('gct_token')).toBe(mockSession.accessToken)
+    // Theo chính sách GCT-34: token chỉ lưu trong bộ nhớ, tuyệt đối không lưu trong localStorage
+    expect(localStorage.getItem('gct_token')).toBeNull()
 
     // Thực hiện đăng xuất
     await auth.requestLogout()
@@ -200,7 +201,8 @@ describe('GCT-7: Đăng xuất và xử lý phiên hết hạn', () => {
   it('sau đăng xuất, khởi tạo ứng dụng mới không tiếp tục dùng phiên cũ', () => {
     const auth1 = createAuthStore('http://localhost:5000')
     auth1.saveSession(mockSession)
-    expect(localStorage.getItem('gct_token')).toBe(mockSession.accessToken)
+    expect(auth1.token.value).toBe(mockSession.accessToken)
+    expect(localStorage.getItem('gct_token')).toBeNull()
 
     auth1.clearSession()
 

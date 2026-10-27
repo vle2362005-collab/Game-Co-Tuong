@@ -1,32 +1,22 @@
 import { ref, computed } from 'vue'
 import type { User, AuthSession, MatchInfo, AppView } from '../types/auth'
 import { loginApi, registerApi, logoutApi, AuthApiError, type RegisterPayload } from '../api/auth'
+import { setApiAuthHandlers } from '../api/client'
+import { createSignalRClient, type SignalRClient } from '../api/signalr'
 
-const STORAGE_TOKEN_KEY = 'gct_token'
-const STORAGE_USER_KEY = 'gct_user'
-
-function loadSavedToken(): string | null {
-  try {
-    return localStorage.getItem(STORAGE_TOKEN_KEY)
-  } catch {
-    return null
-  }
-}
-
-function loadSavedUser(): User | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_USER_KEY)
-    if (!raw) return null
-    return JSON.parse(raw) as User
-  } catch {
-    return null
-  }
+// Clean up any legacy localStorage tokens on module load to guarantee zero persistent tokens
+try {
+  localStorage.removeItem('gct_token')
+  localStorage.removeItem('gct_user')
+} catch {
+  // Storage unavailable
 }
 
 export function createAuthStore(apiBaseUrl: string = 'http://localhost:5000') {
-  const token = ref<string | null>(loadSavedToken())
-  const user = ref<User | null>(loadSavedUser())
-  const currentView = ref<AppView>(token.value && user.value ? 'lobby' : 'login')
+  // Strictly in-memory access token & user profile (never written to localStorage)
+  const token = ref<string | null>(null)
+  const user = ref<User | null>(null)
+  const currentView = ref<AppView>('login')
   const sessionExpired = ref<boolean>(false)
   const isSubmitting = ref<boolean>(false)
   const errorMessage = ref<string | null>(null)
@@ -42,17 +32,33 @@ export function createAuthStore(apiBaseUrl: string = 'http://localhost:5000') {
   const isAuthenticated = computed(() => !!token.value && !!user.value)
   const isPlaying = computed(() => !!activeMatch.value)
 
+  // SignalR client tied to in-memory token
+  const signalR: SignalRClient = createSignalRClient({
+    baseUrl: apiBaseUrl,
+    getToken: () => token.value,
+    onUnauthorized: () => handleSessionExpired()
+  })
+
+  // Hook in-memory token into global ApiClient
+  setApiAuthHandlers(
+    () => token.value,
+    () => handleSessionExpired()
+  )
+
   function saveSession(session: AuthSession) {
+    // Save ONLY into memory
     token.value = session.accessToken
     user.value = session.user
     sessionExpired.value = false
     fieldErrors.value = {}
     errorMessage.value = null
+
+    // Ensure localStorage never contains access token or credentials
     try {
-      localStorage.setItem(STORAGE_TOKEN_KEY, session.accessToken)
-      localStorage.setItem(STORAGE_USER_KEY, JSON.stringify(session.user))
+      localStorage.removeItem('gct_token')
+      localStorage.removeItem('gct_user')
     } catch {
-      // Storage unavailable in private browsing
+      // Storage unavailable
     }
   }
 
@@ -61,9 +67,14 @@ export function createAuthStore(apiBaseUrl: string = 'http://localhost:5000') {
     user.value = null
     activeMatch.value = null
     showSurrenderModal.value = false
+
+    // Close SignalR connection immediately on logout or session expiry
+    signalR.disconnect()
+
+    // Clean up any localStorage remnant
     try {
-      localStorage.removeItem(STORAGE_TOKEN_KEY)
-      localStorage.removeItem(STORAGE_USER_KEY)
+      localStorage.removeItem('gct_token')
+      localStorage.removeItem('gct_user')
     } catch {
       // Storage unavailable
     }
@@ -187,6 +198,7 @@ export function createAuthStore(apiBaseUrl: string = 'http://localhost:5000') {
     showSurrenderModal,
     isAuthenticated,
     isPlaying,
+    signalR,
     login,
     register,
     requestLogout,
