@@ -1,40 +1,102 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { checkHealth } from './api/health'
+import { createAuthStore } from './composables/useAuth'
+import AppHeader from './components/AppHeader.vue'
+import LoginView from './components/LoginView.vue'
+import LobbyView from './components/LobbyView.vue'
+import GameView from './components/GameView.vue'
+import SurrenderModal from './components/SurrenderModal.vue'
 
-const state = ref<'idle' | 'loading' | 'healthy' | 'error'>('idle')
-const message = ref('Chưa kiểm tra kết nối máy chủ.')
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+const auth = createAuthStore(apiBaseUrl)
 
-async function connect() {
-  state.value = 'loading'
-  message.value = 'Đang kết nối…'
-  try {
-    await checkHealth(import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000', AbortSignal.timeout(5000))
-    state.value = 'healthy'
-    message.value = 'Kết nối thành công. Máy chủ đang hoạt động.'
-  } catch {
-    state.value = 'error'
-    message.value = 'Chưa kết nối được. Kiểm tra backend, địa chỉ API và cấu hình CORS.'
-  }
+async function handleLogin(payload: { username: string; password: string }) {
+  await auth.login(payload.username, payload.password)
 }
 </script>
 
 <template>
   <main class="shell">
-    <header><span class="mark" aria-hidden="true">帥</span><span>GAME CỜ TƯỚNG</span></header>
-    <section class="intro" aria-labelledby="page-title">
-      <p class="eyebrow">KHỞI ĐẦU MỘT VÁN CỜ</p>
-      <h1 id="page-title">Mỗi nước đi,<br />một chiến lược.</h1>
-      <p class="description">Bộ khung dự án đã sẵn sàng để nhóm phát triển. Tài khoản, phòng chơi và luật cờ sẽ được bổ sung ở các phần tiếp theo.</p>
+    <AppHeader
+      :is-authenticated="auth.isAuthenticated.value"
+      :is-playing="auth.isPlaying.value"
+      :user="auth.user.value"
+      @logout="auth.requestLogout"
+    />
+
+    <!-- Main Content by View -->
+    <section class="main-content">
+      <LoginView
+        v-if="auth.currentView.value === 'login'"
+        :session-expired="auth.sessionExpired.value"
+        :is-submitting="auth.isSubmitting.value"
+        :error-message="auth.errorMessage.value"
+        @login="handleLogin"
+      />
+
+      <LobbyView
+        v-else-if="auth.currentView.value === 'lobby' && auth.user.value"
+        :user="auth.user.value"
+        @enter-match="auth.enterMatch"
+        @test-expire="auth.handleSessionExpired"
+      />
+
+      <GameView
+        v-else-if="auth.currentView.value === 'game' && auth.activeMatch.value"
+        :match="auth.activeMatch.value"
+        @surrender="auth.requestLogout"
+        @test-expire="auth.handleSessionExpired"
+      />
     </section>
-    <section class="connection" aria-labelledby="connection-title">
-      <div><span class="tag">GCT-21</span><h2 id="connection-title">Kiểm tra môi trường</h2></div>
-      <p class="status" :data-state="state" role="status" aria-live="polite">{{ message }}</p>
-      <button type="button" :disabled="state === 'loading'" @click="connect">
-        {{ state === 'loading' ? 'Đang kiểm tra…' : 'Kiểm tra máy chủ' }} <span aria-hidden="true">↗</span>
-      </button>
-      <p class="hint">Kết quả này xác nhận kết nối API; chưa xác nhận cơ sở dữ liệu hoặc chức năng chơi cờ.</p>
-    </section>
-    <footer>Vue · TypeScript · ASP.NET Core <span>Dự án Game Cờ Tướng</span></footer>
+
+    <!-- Surrender Confirmation Modal (active during gameplay logout attempt) -->
+    <SurrenderModal
+      :show="auth.showSurrenderModal.value"
+      @cancel="auth.cancelLogout"
+      @confirm="auth.confirmSurrenderAndLogout"
+    />
+
+    <footer>
+      <span>Vue 3 · TypeScript · ASP.NET Core</span>
+      <span>Dự án Game Cờ Tướng · Nhánh GCT-7-logout</span>
+    </footer>
   </main>
 </template>
+
+<style scoped>
+.shell {
+  max-width: 1080px;
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 0 24px 24px;
+  display: flex;
+  flex-direction: column;
+}
+
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 24px 0;
+}
+
+footer {
+  border-top: 1px solid #d6dcd0;
+  padding: 20px 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.75rem;
+  color: #65746d;
+}
+
+@media (max-width: 600px) {
+  .shell {
+    padding: 0 16px 16px;
+  }
+  footer {
+    flex-direction: column;
+    text-align: center;
+  }
+}
+</style>
