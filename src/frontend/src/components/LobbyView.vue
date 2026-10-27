@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useRouter } from 'vue-router'
 import type { User, MatchInfo } from '../types/auth'
 
 defineProps<{
@@ -10,6 +11,8 @@ const emit = defineEmits<{
   (e: 'testExpire'): void
 }>()
 
+const router = useRouter()
+
 function startDemoMatch() {
   emit('enterMatch', {
     id: crypto.randomUUID(),
@@ -17,6 +20,18 @@ function startDemoMatch() {
     side: 'red',
     opponentName: 'Kỳ thủ phương Bắc'
   })
+}
+
+function goToRoom() {
+  if (router) {
+    router.push('/rooms/room-demo-01')
+  }
+}
+
+function goToHistory() {
+  if (router) {
+    router.push('/history')
+  }
 }
 </script>
 
@@ -41,6 +56,32 @@ function startDemoMatch() {
           @click="startDemoMatch"
         >
           Tham gia ván cờ ngay ⚔️
+        </button>
+      </div>
+
+      <div class="action-box">
+        <h3>Phòng cờ & Ghép bàn</h3>
+        <p>Tạo phòng riêng hoặc tham gia phòng cờ có sẵn để chọn phe Đỏ/Đen.</p>
+        <button
+          type="button"
+          class="btn-primary"
+          id="enter-room-btn"
+          @click="goToRoom"
+        >
+          Vào phòng cờ 🏰
+        </button>
+      </div>
+
+      <div class="action-box subtle">
+        <h3>Lịch sử thi đấu</h3>
+        <p>Xem lại kết quả các ván đấu đã qua, tỷ lệ thắng/thua và số nước cờ.</p>
+        <button
+          type="button"
+          class="btn-outline"
+          id="view-history-btn"
+          @click="goToHistory"
+        >
+          Xem lịch sử đấu 📜
         </button>
       </div>
 

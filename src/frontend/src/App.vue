@@ -1,17 +1,80 @@
 <script setup lang="ts">
-import { createAuthStore } from './composables/useAuth'
+import { computed, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { useAuth } from './composables/useAuth'
 import AppHeader from './components/AppHeader.vue'
-import LoginView from './components/LoginView.vue'
-import LobbyView from './components/LobbyView.vue'
-import GameView from './components/GameView.vue'
 import SurrenderModal from './components/SurrenderModal.vue'
+import type { MatchInfo } from './types/auth'
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
-const auth = createAuthStore(apiBaseUrl)
+const route = useRoute()
+const router = useRouter()
+
+const apiBaseUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL) || 'http://localhost:5000'
+const auth = useAuth(apiBaseUrl)
+
+const defaultMatch = computed<MatchInfo>(() => auth.activeMatch.value || {
+  id: 'demo-match-01',
+  roomId: 'demo-room-01',
+  side: 'red',
+  opponentName: 'Kỳ thủ phương Bắc'
+})
 
 async function handleLogin(payload: { username: string; password: string }) {
-  await auth.login(payload.username, payload.password)
+  const ok = await auth.login(payload.username, payload.password)
+  if (ok && router) {
+    const redirect = (route?.query?.redirect as string) || '/lobby'
+    router.push(redirect)
+  }
 }
+
+async function handleLogout() {
+  await auth.requestLogout()
+  if (!auth.showSurrenderModal.value && router && router.currentRoute.value.path !== '/login') {
+    router.push('/login')
+  }
+}
+
+async function handleConfirmSurrender() {
+  await auth.confirmSurrenderAndLogout()
+  if (router && router.currentRoute.value.path !== '/login') {
+    router.push('/login')
+  }
+}
+
+function handleEnterMatch(match: MatchInfo) {
+  auth.enterMatch(match)
+  if (router) {
+    router.push(`/game/${match.roomId}`)
+  }
+}
+
+function handleStartMatch(payload: { roomId: string; side: 'red' | 'black'; opponentName: string }) {
+  auth.enterMatch({
+    id: crypto.randomUUID(),
+    roomId: payload.roomId,
+    side: payload.side,
+    opponentName: payload.opponentName
+  })
+  if (router) {
+    router.push(`/game/${payload.roomId}`)
+  }
+}
+
+function handleLeaveMatch() {
+  auth.leaveMatch()
+  if (router) {
+    router.push('/lobby')
+  }
+}
+
+watch(
+  () => auth.sessionExpired.value,
+  (expired) => {
+    if (expired && router && router.currentRoute.value.path !== '/login') {
+      router.push('/login')
+    }
+  }
+)
 </script>
 
 <template>
@@ -20,44 +83,39 @@ async function handleLogin(payload: { username: string; password: string }) {
       :is-authenticated="auth.isAuthenticated.value"
       :is-playing="auth.isPlaying.value"
       :user="auth.user.value"
-      @logout="auth.requestLogout"
+      @logout="handleLogout"
     />
 
-    <!-- Main Content by View -->
+    <!-- Main Content rendered via Vue Router Shell -->
     <section class="main-content">
-      <LoginView
-        v-if="auth.currentView.value === 'login'"
-        :session-expired="auth.sessionExpired.value"
-        :is-submitting="auth.isSubmitting.value"
-        :error-message="auth.errorMessage.value"
-        @login="handleLogin"
-      />
-
-      <LobbyView
-        v-else-if="auth.currentView.value === 'lobby' && auth.user.value"
-        :user="auth.user.value"
-        @enter-match="auth.enterMatch"
-        @test-expire="auth.handleSessionExpired"
-      />
-
-      <GameView
-        v-else-if="auth.currentView.value === 'game' && auth.activeMatch.value"
-        :match="auth.activeMatch.value"
-        @surrender="auth.requestLogout"
-        @test-expire="auth.handleSessionExpired"
-      />
+      <router-view v-slot="{ Component }">
+        <component
+          :is="Component"
+          :user="auth.user.value"
+          :session-expired="auth.sessionExpired.value"
+          :is-submitting="auth.isSubmitting.value"
+          :error-message="auth.errorMessage.value"
+          :match="defaultMatch"
+          @login="handleLogin"
+          @enter-match="handleEnterMatch"
+          @start-match="handleStartMatch"
+          @leave-room="handleLeaveMatch"
+          @surrender="handleLogout"
+          @test-expire="auth.handleSessionExpired"
+        />
+      </router-view>
     </section>
 
     <!-- Surrender Confirmation Modal (active during gameplay logout attempt) -->
     <SurrenderModal
       :show="auth.showSurrenderModal.value"
       @cancel="auth.cancelLogout"
-      @confirm="auth.confirmSurrenderAndLogout"
+      @confirm="handleConfirmSurrender"
     />
 
     <footer>
-      <span>Vue 3 · TypeScript · ASP.NET Core</span>
-      <span>Dự án Game Cờ Tướng · Nhánh GCT-7-logout</span>
+      <span>Vue 3 · Vue Router 4 · TypeScript · ASP.NET Core</span>
+      <span>Dự án Game Cờ Tướng · Nhánh GCT-32-vue-shell</span>
     </footer>
   </main>
 </template>

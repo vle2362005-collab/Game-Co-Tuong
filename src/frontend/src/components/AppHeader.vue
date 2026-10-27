@@ -22,6 +22,15 @@ const emit = defineEmits<{
       </div>
     </div>
 
+    <nav v-if="isAuthenticated" class="header-nav" aria-label="Điều hướng chính">
+      <router-link to="/lobby" class="nav-link" id="nav-link-lobby">
+        Sảnh chờ
+      </router-link>
+      <router-link to="/history" class="nav-link" id="nav-link-history">
+        Lịch sử đấu
+      </router-link>
+    </nav>
+
     <div v-if="isAuthenticated && user" class="user-nav">
       <span class="match-indicator" :class="{ active: isPlaying }">
         {{ isPlaying ? '⚔️ Đang thi đấu' : '🟢 Sảnh chờ' }}
@@ -87,6 +96,28 @@ const emit = defineEmits<{
   font-size: 0.68rem;
   color: #9b4036;
   letter-spacing: 0.08em;
+}
+
+.header-nav {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.nav-link {
+  color: #53625b;
+  text-decoration: none;
+  font-size: 0.88rem;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.nav-link:hover,
+.nav-link.router-link-active {
+  color: #9b4036;
+  background: #fdf3f2;
 }
 
 .user-nav {

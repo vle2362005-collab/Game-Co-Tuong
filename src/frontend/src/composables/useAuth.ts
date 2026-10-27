@@ -165,3 +165,13 @@ export function createAuthStore(apiBaseUrl: string = 'http://localhost:5000') {
 }
 
 export type AuthStore = ReturnType<typeof createAuthStore>
+
+let globalAuthStore: AuthStore | null = null
+
+export function useAuth(apiBaseUrl?: string): AuthStore {
+  if (!globalAuthStore) {
+    const defaultUrl = apiBaseUrl || (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL) || 'http://localhost:5000'
+    globalAuthStore = createAuthStore(defaultUrl)
+  }
+  return globalAuthStore
+}
