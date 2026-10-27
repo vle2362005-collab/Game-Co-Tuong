@@ -14,7 +14,7 @@ public class JwtAuthenticationMiddleware
         _next = next;
     }
 
-    public async Task InvokeAsync(HttpContext context, ITokenService tokenService)
+    public async Task InvokeAsync(HttpContext context, ITokenService tokenService, GameCoTuong.Infrastructure.Persistence.GameDbContext dbContext)
     {
         string? token = null;
 
@@ -37,7 +37,17 @@ public class JwtAuthenticationMiddleware
             var principal = tokenService.ValidateToken(token);
             if (principal is not null)
             {
-                context.User = principal;
+                var jti = principal.FindFirst("jti")?.Value;
+                var isRevoked = !string.IsNullOrEmpty(jti) && await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AnyAsync(dbContext.RevokedTokens, r => r.Jti == jti);
+
+                if (isRevoked)
+                {
+                    context.Items["TokenRevoked"] = true;
+                }
+                else
+                {
+                    context.User = principal;
+                }
             }
             else
             {

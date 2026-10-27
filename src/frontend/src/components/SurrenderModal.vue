@@ -51,6 +51,11 @@ onUnmounted(() => {
             Bạn có chắc chắn muốn đầu hàng để kết thúc phiên và đăng xuất không?
           </p>
 
+          <div class="policy-note">
+            <span class="policy-icon" aria-hidden="true">🔒</span>
+            <span>Chính sách phiên: Token JWT của bạn sẽ được thu hồi trên máy chủ. Trường hợp không có bảng thu hồi (stateless JWT), JWT cũ vẫn có hiệu lực cho đến thời điểm hết hạn (exp).</span>
+          </div>
+
           <div class="modal-actions">
             <button
               type="button"
@@ -120,7 +125,27 @@ h2 {
 .modal-subtext {
   font-size: 0.88rem;
   color: #53625b;
-  margin-bottom: 24px;
+  margin-bottom: 16px;
+}
+
+.policy-note {
+  background: #fbfaf6;
+  border: 1px dashed #d6dcd0;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 0.78rem;
+  color: #65746d;
+  line-height: 1.45;
+  margin-bottom: 22px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  text-align: left;
+}
+
+.policy-icon {
+  font-size: 0.95rem;
+  flex-shrink: 0;
 }
 
 .modal-actions {

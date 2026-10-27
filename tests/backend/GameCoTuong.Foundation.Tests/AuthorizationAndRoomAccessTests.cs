@@ -602,6 +602,213 @@ public sealed class AuthorizationAndRoomAccessTests : IClassFixture<WebApplicati
         Assert.DoesNotContain(rawJwt, sanitizedMessage);
         Assert.Contains("[REDACTED]", sanitizedMessage);
     }
+
+    // ========================================================================
+    // 9. GCT-30: Session Policy & Profile Retrieval Tests
+    // ========================================================================
+
+    [Fact]
+    public async Task GetMe_cannot_be_spoofed_by_passing_arbitrary_user_id()
+    {
+        using var client = _factory.CreateClient();
+        var (userA, tokenA) = await CreateUserAndLoginAsync(client, "prof_a");
+        var (userB, _) = await CreateUserAndLoginAsync(client, "prof_b");
+
+        // User A tries to pass User B's ID in query string
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokenA);
+        var response = await client.GetAsync($"/api/v1/users/me?userId={userB.Id}");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var respData = await response.Content.ReadFromJsonAsync<ApiSuccessResponse<UserPublicDto>>();
+        Assert.NotNull(respData);
+
+        // Must strictly return User A's profile, completely ignoring userB.Id query parameter!
+        Assert.Equal(userA.Id, respData.Data.Id);
+        Assert.Equal(userA.Username, respData.Data.Username);
+        Assert.NotEqual(userB.Id, respData.Data.Id);
+    }
+
+    [Fact]
+    public async Task Logout_revokes_token_and_rejects_subsequent_requests()
+    {
+        using var client = _factory.CreateClient();
+        var (user, token) = await CreateUserAndLoginAsync(client, "rev_test");
+
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        // 1. Initial request with token succeeds
+        var beforeResp = await client.GetAsync("/api/v1/users/me");
+        Assert.Equal(HttpStatusCode.OK, beforeResp.StatusCode);
+
+        // 2. Perform logout
+        var logoutResp = await client.PostAsync("/api/v1/auth/logout", null);
+        Assert.Equal(HttpStatusCode.OK, logoutResp.StatusCode);
+        var logoutData = await logoutResp.Content.ReadFromJsonAsync<ApiSuccessResponse<LogoutResponseDto>>();
+        Assert.NotNull(logoutData);
+        Assert.True(logoutData.Data.Acknowledged);
+        Assert.True(logoutData.Data.Revoked);
+        Assert.Contains("thu hồi", logoutData.Data.PolicyMessage);
+
+        // 3. Subsequent API request with the same revoked token must be rejected with 401 UNAUTHORIZED
+        var afterResp = await client.GetAsync("/api/v1/users/me");
+        Assert.Equal(HttpStatusCode.Unauthorized, afterResp.StatusCode);
+        var errEnvelope = await afterResp.Content.ReadFromJsonAsync<ApiErrorEnvelope>();
+        Assert.NotNull(errEnvelope);
+        Assert.Equal("UNAUTHORIZED", errEnvelope.Error.Code);
+
+        // 4. SignalR connection attempt with the revoked token must also be rejected
+        var sigResp = await client.PostAsync($"/hubs/game/negotiate?negotiateVersion=1&access_token={token}", null);
+        Assert.Equal(HttpStatusCode.Unauthorized, sigResp.StatusCode);
+    }
+
+    [Fact]
+    public async Task Logout_closes_waiting_room_and_vacates_membership_for_host()
+    {
+        using var client = _factory.CreateClient();
+        var (hostUser, hostToken) = await CreateUserAndLoginAsync(client, "host_rm_close");
+
+        var roomId = Guid.NewGuid();
+        using (var db = CreateDbContext())
+        {
+            var room = new Room
+            {
+                Id = roomId,
+                Code = Guid.NewGuid().ToString("N")[..6].ToUpperInvariant(),
+                Name = "Waiting Room Host Logout",
+                HostUserId = hostUser.Id,
+                Status = "waiting",
+                CreatedAt = DateTimeOffset.UtcNow,
+                LastActivityAt = DateTimeOffset.UtcNow
+            };
+            db.Rooms.Add(room);
+
+            db.RoomMemberships.Add(new RoomMembership
+            {
+                Id = Guid.NewGuid(),
+                RoomId = roomId,
+                UserId = hostUser.Id,
+                Side = "red",
+                JoinedAt = DateTimeOffset.UtcNow,
+                LeftAt = null
+            });
+
+            await db.SaveChangesAsync();
+        }
+
+        // Host logs out
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", hostToken);
+        var logoutResp = await client.PostAsync("/api/v1/auth/logout", null);
+        Assert.Equal(HttpStatusCode.OK, logoutResp.StatusCode);
+
+        // Verify room is closed and membership left
+        using (var db = CreateDbContext())
+        {
+            var room = await db.Rooms.AsNoTracking().FirstAsync(r => r.Id == roomId);
+            Assert.Equal("closed", room.Status);
+            Assert.NotNull(room.ClosedAt);
+
+            var membership = await db.RoomMemberships.AsNoTracking().FirstAsync(m => m.RoomId == roomId && m.UserId == hostUser.Id);
+            Assert.NotNull(membership.LeftAt);
+            Assert.False(membership.IsConnected);
+        }
+    }
+
+    [Fact]
+    public async Task Logout_during_active_match_resigns_match_and_awards_opponent()
+    {
+        using var client = _factory.CreateClient();
+        var (redUser, redToken) = await CreateUserAndLoginAsync(client, "red_res_logout");
+        var (blackUser, _) = await CreateUserAndLoginAsync(client, "blk_res_logout");
+
+        var roomId = Guid.NewGuid();
+        var matchId = Guid.NewGuid();
+
+        using (var db = CreateDbContext())
+        {
+            var room = new Room
+            {
+                Id = roomId,
+                Code = Guid.NewGuid().ToString("N")[..6].ToUpperInvariant(),
+                Name = "Active Match Logout Room",
+                HostUserId = redUser.Id,
+                Status = "playing",
+                CreatedAt = DateTimeOffset.UtcNow,
+                LastActivityAt = DateTimeOffset.UtcNow
+            };
+            db.Rooms.Add(room);
+            await db.SaveChangesAsync();
+
+            var match = new Match
+            {
+                Id = matchId,
+                RoomId = roomId,
+                Status = "playing",
+                SideToMove = "red",
+                InitialBoardJson = "{}",
+                CurrentBoardJson = "{}",
+                StartedAt = DateTimeOffset.UtcNow
+            };
+            db.Matches.Add(match);
+
+            db.MatchPlayers.Add(new MatchPlayer
+            {
+                Id = Guid.NewGuid(),
+                MatchId = matchId,
+                UserId = redUser.Id,
+                Side = "red"
+            });
+
+            db.MatchPlayers.Add(new MatchPlayer
+            {
+                Id = Guid.NewGuid(),
+                MatchId = matchId,
+                UserId = blackUser.Id,
+                Side = "black"
+            });
+
+            db.RoomMemberships.Add(new RoomMembership
+            {
+                Id = Guid.NewGuid(),
+                RoomId = roomId,
+                UserId = redUser.Id,
+                Side = "red",
+                JoinedAt = DateTimeOffset.UtcNow,
+                LeftAt = null
+            });
+
+            db.RoomMemberships.Add(new RoomMembership
+            {
+                Id = Guid.NewGuid(),
+                RoomId = roomId,
+                UserId = blackUser.Id,
+                Side = "black",
+                JoinedAt = DateTimeOffset.UtcNow,
+                LeftAt = null
+            });
+
+            room.CurrentMatchId = matchId;
+            await db.SaveChangesAsync();
+        }
+
+        // Red player logs out while match is playing
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", redToken);
+        var logoutResp = await client.PostAsync("/api/v1/auth/logout", null);
+        Assert.Equal(HttpStatusCode.OK, logoutResp.StatusCode);
+
+        // Verify match finished with opponent (black) winning by resignation
+        using (var db = CreateDbContext())
+        {
+            var match = await db.Matches.AsNoTracking().FirstAsync(m => m.Id == matchId);
+            Assert.Equal("finished", match.Status);
+            Assert.Equal("black", match.Winner);
+            Assert.Equal("resignation", match.ResultReason);
+            Assert.NotNull(match.EndedAt);
+
+            var redMembership = await db.RoomMemberships.AsNoTracking().FirstAsync(m => m.RoomId == roomId && m.UserId == redUser.Id);
+            Assert.NotNull(redMembership.LeftAt);
+            Assert.False(redMembership.IsConnected);
+        }
+    }
 }
 
 // Test helper class to simulate HubCallerContext

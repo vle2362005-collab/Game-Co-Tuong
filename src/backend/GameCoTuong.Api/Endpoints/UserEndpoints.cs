@@ -65,6 +65,30 @@ public static class UserEndpoints
             ), statusCode: StatusCodes.Status401Unauthorized);
         }
 
+        var jtiClaim = principal.FindFirst("jti")?.Value;
+        if (!string.IsNullOrEmpty(jtiClaim))
+        {
+            var isRevoked = await dbContext.RevokedTokens
+                .AsNoTracking()
+                .AnyAsync(r => r.Jti == jtiClaim, cancellationToken);
+
+            if (isRevoked)
+            {
+                return Results.Json(new ApiErrorEnvelope(
+                    reqId,
+                    serverTime,
+                    new ApiErrorDetail(
+                        "UNAUTHORIZED",
+                        "Phiên đăng nhập đã bị thu hồi do đăng xuất.",
+                        false,
+                        null,
+                        null,
+                        new Dictionary<string, string[]>()
+                    )
+                ), statusCode: StatusCodes.Status401Unauthorized);
+            }
+        }
+
         var subClaim = principal.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (!Guid.TryParse(subClaim, out var userId))
         {

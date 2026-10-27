@@ -2,6 +2,9 @@ using System.Text.Json.Serialization;
 using GameCoTuong.Application.Auth.Models;
 using GameCoTuong.Application.Auth.Services;
 using GameCoTuong.Application.Common.Interfaces;
+using GameCoTuong.Domain.Entities;
+using GameCoTuong.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
 
 namespace GameCoTuong.Api.Endpoints;
 
@@ -165,9 +168,11 @@ public static class AuthEndpoints
         ), statusCode: statusCode);
     }
 
-    public static IResult HandleLogoutAsync(
+    public static async Task<IResult> HandleLogoutAsync(
         HttpContext context,
-        ITokenService tokenService)
+        ITokenService tokenService,
+        GameDbContext dbContext,
+        CancellationToken cancellationToken)
     {
         var reqId = ExtractRequestId(context);
         var authHeader = context.Request.Headers.Authorization.ToString();
@@ -205,10 +210,83 @@ public static class AuthEndpoints
             ), statusCode: StatusCodes.Status401Unauthorized);
         }
 
-        return Results.Ok(new ApiSuccessResponse<AckDto>(
+        var jti = principal.FindFirst("jti")?.Value;
+        var sub = principal.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+               ?? principal.FindFirst("sub")?.Value;
+
+        try
+        {
+            if (!string.IsNullOrEmpty(jti) && Guid.TryParse(sub, out var userId))
+            {
+                // 1. Record token revocation
+                var isAlreadyRevoked = await dbContext.RevokedTokens.AnyAsync(r => r.Jti == jti, cancellationToken);
+                if (!isAlreadyRevoked)
+                {
+                    var expClaim = principal.FindFirst("exp")?.Value;
+                    var expiresAt = long.TryParse(expClaim, out var expSeconds)
+                        ? DateTimeOffset.FromUnixTimeSeconds(expSeconds)
+                        : DateTimeOffset.UtcNow.AddHours(24);
+
+                    dbContext.RevokedTokens.Add(new RevokedToken
+                    {
+                        Jti = jti,
+                        UserId = userId,
+                        RevokedAt = DateTimeOffset.UtcNow,
+                        ExpiresAt = expiresAt
+                    });
+                }
+
+                // 2. Clean up active room and match status
+                var activeMemberships = await dbContext.RoomMemberships
+                    .Include(m => m.Room)
+                    .Where(m => m.UserId == userId && m.LeftAt == null)
+                    .ToListAsync(cancellationToken);
+
+                foreach (var m in activeMemberships)
+                {
+                    m.LeftAt = DateTimeOffset.UtcNow;
+                    m.IsConnected = false;
+
+                    if (m.Room is not null)
+                    {
+                        if (m.Room.CurrentMatchId.HasValue && string.Equals(m.Room.Status, "playing", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var match = await dbContext.Matches.FirstOrDefaultAsync(mat => mat.Id == m.Room.CurrentMatchId.Value, cancellationToken);
+                            if (match is not null && string.Equals(match.Status, "playing", StringComparison.OrdinalIgnoreCase))
+                            {
+                                match.Status = "finished";
+                                match.Winner = string.Equals(m.Side, "red", StringComparison.OrdinalIgnoreCase) ? "black" : "red";
+                                match.ResultReason = "resignation";
+                                match.EndedAt = DateTimeOffset.UtcNow;
+                            }
+                        }
+                        else if (string.Equals(m.Room.Status, "waiting", StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (m.Room.HostUserId == userId)
+                            {
+                                m.Room.Status = "closed";
+                                m.Room.ClosedAt = DateTimeOffset.UtcNow;
+                            }
+                        }
+                    }
+                }
+
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }
+        }
+        catch (Exception ex)
+        {
+            return Results.Problem(detail: ex.ToString(), statusCode: StatusCodes.Status500InternalServerError);
+        }
+
+        return Results.Ok(new ApiSuccessResponse<LogoutResponseDto>(
             reqId,
             DateTimeOffset.UtcNow,
-            new AckDto(true)
+            new LogoutResponseDto(
+                Acknowledged: true,
+                Revoked: true,
+                PolicyMessage: "JWT đã được thu hồi trong cơ sở dữ liệu. Trường hợp không có bảng thu hồi (stateless JWT), token cũ vẫn có hiệu lực cho đến thời điểm hết hạn (exp)."
+            )
         ));
     }
 
