@@ -809,9 +809,211 @@ public sealed class AuthorizationAndRoomAccessTests : IClassFixture<WebApplicati
             Assert.False(redMembership.IsConnected);
         }
     }
+
+    // ========================================================================
+    // 10. GCT-35: SignalR Authenticated Hub, Groups & Room Isolation Tests
+    // ========================================================================
+
+    [Fact]
+    public async Task SignalR_negotiate_from_allowed_origin_succeeds_with_cors_headers()
+    {
+        using var client = _factory.CreateClient();
+        var (_, token) = await CreateUserAndLoginAsync(client, "sig_cors_valid");
+
+        // Request with Origin from AllowedOrigins (http://localhost:5173)
+        client.DefaultRequestHeaders.Add("Origin", "http://localhost:5173");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var response = await client.PostAsync("/hubs/game/negotiate?negotiateVersion=1", null);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(response.Headers.Contains("Access-Control-Allow-Origin"));
+        Assert.Equal("http://localhost:5173", response.Headers.GetValues("Access-Control-Allow-Origin").First());
+        Assert.Equal("true", response.Headers.GetValues("Access-Control-Allow-Credentials").First());
+    }
+
+    [Fact]
+    public async Task SignalR_negotiate_without_token_is_blocked_with_401()
+    {
+        using var client = _factory.CreateClient();
+        // Request negotiate without any token
+        var response = await client.PostAsync("/hubs/game/negotiate?negotiateVersion=1", null);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        var errEnvelope = await response.Content.ReadFromJsonAsync<ApiErrorEnvelope>();
+        Assert.NotNull(errEnvelope);
+        Assert.Equal("UNAUTHORIZED", errEnvelope.Error.Code);
+    }
+
+    [Fact]
+    public async Task GameHub_JoinLobby_adds_connection_to_lobby_group()
+    {
+        using var client = _factory.CreateClient();
+        var (user, _) = await CreateUserAndLoginAsync(client, "lobby_u");
+
+        using var scope = _factory.Services.CreateScope();
+        var roomAuthService = scope.ServiceProvider.GetRequiredService<IRoomAuthorizationService>();
+        var hub = new GameHub(roomAuthService);
+
+        var groupManager = new TestGroupManager();
+        var clients = new TestHubCallerClients();
+
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(
+            new[] { new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()) }, "Bearer"));
+
+        hub.Context = new TestHubCallerContext(principal);
+        hub.Groups = groupManager;
+        hub.Clients = clients;
+
+        await hub.JoinLobby();
+
+        // Must add connection to "lobby" group
+        Assert.Contains(groupManager.AddedGroups, g => g.GroupName == GameHub.LobbyGroupName);
+        Assert.Contains(clients.CallerProxy.Invocations, inv => inv.Method == "LobbyJoined");
+    }
+
+    [Fact]
+    public async Task GameHub_JoinRoom_allows_member_and_blocks_outsider_with_HubException()
+    {
+        using var client = _factory.CreateClient();
+        var (memberUser, _) = await CreateUserAndLoginAsync(client, "rm_mem_join");
+        var (outsiderUser, _) = await CreateUserAndLoginAsync(client, "rm_out_join");
+
+        var roomId = Guid.NewGuid();
+        using (var db = CreateDbContext())
+        {
+            var room = new Room
+            {
+                Id = roomId,
+                Code = Guid.NewGuid().ToString("N")[..6].ToUpperInvariant(),
+                Name = "SignalR Room Test",
+                HostUserId = memberUser.Id,
+                Status = "waiting",
+                CreatedAt = DateTimeOffset.UtcNow,
+                LastActivityAt = DateTimeOffset.UtcNow
+            };
+            db.Rooms.Add(room);
+
+            db.RoomMemberships.Add(new RoomMembership
+            {
+                Id = Guid.NewGuid(),
+                RoomId = roomId,
+                UserId = memberUser.Id,
+                Side = "red",
+                JoinedAt = DateTimeOffset.UtcNow
+            });
+
+            await db.SaveChangesAsync();
+        }
+
+        using var scope = _factory.Services.CreateScope();
+        var roomAuthService = scope.ServiceProvider.GetRequiredService<IRoomAuthorizationService>();
+
+        // 1. Member joins -> success
+        var memberHub = new GameHub(roomAuthService);
+        var memberGroups = new TestGroupManager();
+        var memberClients = new TestHubCallerClients();
+        var memberPrincipal = new ClaimsPrincipal(new ClaimsIdentity(
+            new[] { new Claim(ClaimTypes.NameIdentifier, memberUser.Id.ToString()) }, "Bearer"));
+
+        memberHub.Context = new TestHubCallerContext(memberPrincipal);
+        memberHub.Groups = memberGroups;
+        memberHub.Clients = memberClients;
+
+        await memberHub.JoinRoom(roomId);
+
+        var expectedGroup = GameHub.GetRoomGroupName(roomId);
+        Assert.Contains(memberGroups.AddedGroups, g => g.GroupName == expectedGroup);
+        Assert.True(memberClients.GroupProxies.ContainsKey(expectedGroup));
+        Assert.Contains(memberClients.GroupProxies[expectedGroup].Invocations, inv => inv.Method == "PlayerJoinedRoom");
+
+        // 2. Outsider joins -> HubException FORBIDDEN
+        var outHub = new GameHub(roomAuthService);
+        var outGroups = new TestGroupManager();
+        var outClients = new TestHubCallerClients();
+        var outPrincipal = new ClaimsPrincipal(new ClaimsIdentity(
+            new[] { new Claim(ClaimTypes.NameIdentifier, outsiderUser.Id.ToString()) }, "Bearer"));
+
+        outHub.Context = new TestHubCallerContext(outPrincipal);
+        outHub.Groups = outGroups;
+        outHub.Clients = outClients;
+
+        var ex = await Assert.ThrowsAsync<HubException>(() => outHub.JoinRoom(roomId));
+        Assert.Contains("FORBIDDEN", ex.Message);
+        Assert.DoesNotContain(outGroups.AddedGroups, g => g.GroupName == expectedGroup);
+    }
+
+    [Fact]
+    public async Task GameHub_SendRoomMessage_isolates_event_to_target_room_and_blocks_outsider()
+    {
+        using var client = _factory.CreateClient();
+        var (memberUser, _) = await CreateUserAndLoginAsync(client, "msg_mem");
+        var (outsiderUser, _) = await CreateUserAndLoginAsync(client, "msg_out");
+
+        var roomA = Guid.NewGuid();
+        var roomB = Guid.NewGuid();
+
+        using (var db = CreateDbContext())
+        {
+            db.Rooms.Add(new Room
+            {
+                Id = roomA,
+                Code = "ROOMA1",
+                Name = "Room A",
+                HostUserId = memberUser.Id,
+                Status = "waiting",
+                CreatedAt = DateTimeOffset.UtcNow,
+                LastActivityAt = DateTimeOffset.UtcNow
+            });
+
+            db.RoomMemberships.Add(new RoomMembership
+            {
+                Id = Guid.NewGuid(),
+                RoomId = roomA,
+                UserId = memberUser.Id,
+                Side = "red",
+                JoinedAt = DateTimeOffset.UtcNow
+            });
+
+            await db.SaveChangesAsync();
+        }
+
+        using var scope = _factory.Services.CreateScope();
+        var roomAuthService = scope.ServiceProvider.GetRequiredService<IRoomAuthorizationService>();
+
+        var hub = new GameHub(roomAuthService);
+        var clients = new TestHubCallerClients();
+        var memberPrincipal = new ClaimsPrincipal(new ClaimsIdentity(
+            new[] { new Claim(ClaimTypes.NameIdentifier, memberUser.Id.ToString()) }, "Bearer"));
+
+        hub.Context = new TestHubCallerContext(memberPrincipal);
+        hub.Clients = clients;
+
+        // Member sends message in Room A
+        await hub.SendRoomMessage(roomA, "Chào các kỳ thủ!");
+
+        var groupA = GameHub.GetRoomGroupName(roomA);
+        var groupB = GameHub.GetRoomGroupName(roomB);
+
+        // Event MUST be sent to Room A group only
+        Assert.True(clients.GroupProxies.ContainsKey(groupA));
+        Assert.Contains(clients.GroupProxies[groupA].Invocations, inv => inv.Method == "RoomMessageReceived");
+
+        // Event MUST NOT be sent to Room B group (Room Isolation!)
+        Assert.False(clients.GroupProxies.ContainsKey(groupB));
+
+        // Outsider attempts to send message -> FORBIDDEN
+        var outHub = new GameHub(roomAuthService);
+        var outPrincipal = new ClaimsPrincipal(new ClaimsIdentity(
+            new[] { new Claim(ClaimTypes.NameIdentifier, outsiderUser.Id.ToString()) }, "Bearer"));
+        outHub.Context = new TestHubCallerContext(outPrincipal);
+
+        var ex = await Assert.ThrowsAsync<HubException>(() => outHub.SendRoomMessage(roomA, "Tin nhắn của kẻ ngoài cuộc"));
+        Assert.Contains("FORBIDDEN", ex.Message);
+    }
 }
 
-// Test helper class to simulate HubCallerContext
+// Test helper classes to simulate HubCallerContext, Groups, and Clients
 internal sealed class TestHubCallerContext : HubCallerContext
 {
     private readonly ClaimsPrincipal _user;
@@ -829,4 +1031,60 @@ internal sealed class TestHubCallerContext : HubCallerContext
     public override IFeatureCollection Features { get; } = new FeatureCollection();
     public override CancellationToken ConnectionAborted => CancellationToken.None;
     public override void Abort() { }
+}
+
+internal sealed class TestGroupManager : IGroupManager
+{
+    public List<(string ConnectionId, string GroupName)> AddedGroups { get; } = new();
+    public List<(string ConnectionId, string GroupName)> RemovedGroups { get; } = new();
+
+    public Task AddToGroupAsync(string connectionId, string groupName, CancellationToken cancellationToken = default)
+    {
+        AddedGroups.Add((connectionId, groupName));
+        return Task.CompletedTask;
+    }
+
+    public Task RemoveFromGroupAsync(string connectionId, string groupName, CancellationToken cancellationToken = default)
+    {
+        RemovedGroups.Add((connectionId, groupName));
+        return Task.CompletedTask;
+    }
+}
+
+internal sealed class TestClientProxy : IClientProxy
+{
+    public List<(string Method, object?[] Args)> Invocations { get; } = new();
+
+    public Task SendCoreAsync(string method, object?[] args, CancellationToken cancellationToken = default)
+    {
+        Invocations.Add((method, args));
+        return Task.CompletedTask;
+    }
+}
+
+internal sealed class TestHubCallerClients : IHubCallerClients
+{
+    public TestClientProxy CallerProxy { get; } = new();
+    public Dictionary<string, TestClientProxy> GroupProxies { get; } = new();
+
+    public IClientProxy Caller => CallerProxy;
+    public IClientProxy Others => new TestClientProxy();
+    public IClientProxy All => new TestClientProxy();
+    public IClientProxy AllExcept(IReadOnlyList<string> excludedConnectionIds) => new TestClientProxy();
+    public IClientProxy Client(string connectionId) => new TestClientProxy();
+    public IClientProxy Clients(IReadOnlyList<string> connectionIds) => new TestClientProxy();
+    public IClientProxy Group(string groupName)
+    {
+        if (!GroupProxies.TryGetValue(groupName, out var proxy))
+        {
+            proxy = new TestClientProxy();
+            GroupProxies[groupName] = proxy;
+        }
+        return proxy;
+    }
+    public IClientProxy GroupExcept(string groupName, IReadOnlyList<string> excludedConnectionIds) => Group(groupName);
+    public IClientProxy Groups(IReadOnlyList<string> groupNames) => new TestClientProxy();
+    public IClientProxy OthersInGroup(string groupName) => Group(groupName);
+    public IClientProxy User(string userId) => new TestClientProxy();
+    public IClientProxy Users(IReadOnlyList<string> userIds) => new TestClientProxy();
 }
