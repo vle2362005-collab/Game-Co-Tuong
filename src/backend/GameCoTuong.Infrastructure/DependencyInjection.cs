@@ -35,6 +35,9 @@ public static class DependencyInjection
             }
         });
         services.AddSingleton<ITokenService, JwtTokenService>();
+        services.AddHttpContextAccessor();
+        services.AddScoped<ICurrentUserService, CurrentUserService>();
+        services.AddScoped<IRoomAuthorizationService, RoomAuthorizationService>();
         services.AddScoped<IRegistrationService, RegistrationService>();
         services.AddScoped<ILoginService, LoginService>();
 
