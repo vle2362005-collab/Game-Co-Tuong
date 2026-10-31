@@ -2,6 +2,7 @@ using GameCoTuong.Api.Configuration;
 using GameCoTuong.Api.Endpoints;
 using GameCoTuong.Api.Hubs;
 using GameCoTuong.Api.Middleware;
+using GameCoTuong.Api.Services;
 using GameCoTuong.Infrastructure;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
@@ -36,6 +37,10 @@ builder.Services.AddSingleton<LiveConnections>();
 builder.Services.AddSingleton<VideoCalls>();
 builder.Services.AddSignalR(options => options.AddFilter<SessionHubFilter>());
 builder.Services.AddInfrastructure(builder.Configuration);
+if (!string.IsNullOrEmpty(builder.Configuration.GetConnectionString("GameDatabase")))
+{
+    builder.Services.AddHostedService<RoomCleanupWorker>();
+}
 
 var app = builder.Build();
 if (app.Configuration["Database:Provider"] == "Sqlite")
