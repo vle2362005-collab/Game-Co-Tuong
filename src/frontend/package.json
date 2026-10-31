@@ -17,7 +17,9 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "vue": "3.5.44"
+    "@microsoft/signalr": "10.0.11",
+    "vue": "3.5.44",
+    "vue-router": "4.6.4"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
