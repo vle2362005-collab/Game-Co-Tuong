@@ -172,27 +172,39 @@ public sealed class GameService(GameDbContext db)
         return match;
     }
 
-    public async Task<object> MatchSnapshot(Guid id, Guid userId) => MatchView(await LoadMatch(id, userId));
-    private static object MatchView(Match match) => new
+    public async Task<object> MatchSnapshot(Guid id, Guid userId) => await MatchView(await LoadMatch(id, userId));
+    private async Task<object> MatchView(Match match)
     {
-        match.Id, match.RoomId, match.Status, match.Version, match.MoveNumber, match.SideToMove,
-        pieces = BoardSerializer.Deserialize(match.CurrentBoardJson).ToArray(), match.Winner, match.ResultReason,
-        check = XiangqiRules.IsInCheck(BoardSerializer.Deserialize(match.CurrentBoardJson), ParseSide(match.SideToMove)),
-        players = match.Players.Select(p => new { p.UserId, p.Side }), match.DrawOfferedBy
-    };
+        var board = BoardSerializer.Deserialize(match.CurrentBoardJson);
+        var turn = ParseSide(match.SideToMove);
+        // The accepted move is still tracked before SaveChanges; GETs read the latest persisted move.
+        var last = db.Moves.Local.FirstOrDefault(m => m.MatchId == match.Id && m.Ply == match.MoveNumber)
+            ?? await db.Moves.AsNoTracking().Where(m => m.MatchId == match.Id).OrderByDescending(m => m.Ply).FirstOrDefaultAsync();
+        return new
+        {
+            match.Id, match.RoomId, match.Status, match.Version, match.MoveNumber, match.SideToMove,
+            pieces = board.ToArray(), match.Winner, match.ResultReason,
+            check = XiangqiRules.IsInCheck(board, turn),
+            legalMoves = match.Status == "playing" ? XiangqiRules.Generate(board, turn) : Array.Empty<LegalMove>(),
+            lastMove = last is null ? null : new { last.RequestId, last.Ply, last.Side, last.PieceId,
+                last.FromCol, last.FromRow, last.ToCol, last.ToRow, last.CapturedPieceId },
+            players = match.Players.Select(p => new { p.UserId, p.Side }), match.DrawOfferedBy
+        };
+    }
     private static Side ParseSide(string side) => side == "red" ? Side.Red : Side.Black;
 
     public Task<object> Move(Guid id, Guid userId, MoveInput input) => Write(async () =>
     {
         var match = await LoadMatch(id, userId);
         if (input.RequestId == Guid.Empty) throw new GameFault("VALIDATION_ERROR", "Thiếu mã nước.", 400);
+        if (string.IsNullOrWhiteSpace(input.PieceId)) throw new GameFault("VALIDATION_ERROR", "Thiếu mã quân cờ.", 400);
         var previous = await db.Moves.SingleOrDefaultAsync(m => m.MatchId == id && m.RequestId == input.RequestId);
         if (previous is not null)
         {
             var playerSide = match.Players.Single(p => p.UserId == userId).Side;
             if (previous.Side != playerSide || previous.PieceId != input.PieceId || previous.ToCol != input.ToCol || previous.ToRow != input.ToRow)
                 throw new GameFault("REQUEST_CONFLICT", "Mã nước đã được sử dụng.");
-            return MatchView(match);
+            return await MatchView(match);
         }
         if (match.Status != "playing") throw new GameFault("MATCH_NOT_PLAYING", "Trận không cho phép đi quân.");
         if (match.Version != input.ExpectedVersion) throw new GameFault("VERSION_CONFLICT", "Bàn cờ đã thay đổi, hãy tải lại.");
@@ -213,7 +225,7 @@ public sealed class GameService(GameDbContext db)
         match.DrawOfferedBy = null;
         var result = XiangqiRules.Result(next, ParseSide(match.SideToMove));
         if (result.Finished) await Finish(match, result.Winner == Side.Red ? "red" : "black", result.Reason!);
-        return MatchView(match);
+        return await MatchView(match);
     });
 
     private async Task Finish(Match match, string? winner, string reason)
@@ -227,16 +239,16 @@ public sealed class GameService(GameDbContext db)
     public Task<object> End(Guid id, Guid userId, bool draw) => Write(async () =>
     {
         var match = await LoadMatch(id, userId);
-        if (match.Status == "finished") return MatchView(match);
+        if (match.Status == "finished") return await MatchView(match);
         if (match.Status != "playing") throw new GameFault("MATCH_NOT_PLAYING", "Trận đang tạm dừng.");
         var side = match.Players.Single(p => p.UserId == userId).Side;
         if (draw)
         {
             if (match.DrawOfferedBy is not null && match.DrawOfferedBy != side) await Finish(match, null, "draw-agreement");
-            else match.DrawOfferedBy = side;
+            else if (match.DrawOfferedBy != side) { match.DrawOfferedBy = side; match.Version++; }
         }
         else await Finish(match, side == "red" ? "black" : "red", "resignation");
-        return MatchView(match);
+        return await MatchView(match);
     });
 
     public async Task<object> History(Guid id, Guid userId)

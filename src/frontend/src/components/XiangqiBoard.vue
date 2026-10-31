@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import type { Piece } from '../api/game'
+import type { Piece, ConfirmedMove } from '../api/game'
 import { boardPoint, displayCell } from './boardLayout'
-const props = defineProps<{ pieces: Piece[]; flipped?: boolean; selected?: string | null; disabled?: boolean }>()
+const props = defineProps<{ pieces: Piece[]; flipped?: boolean; selected?: string | null; disabled?: boolean;
+  destinations?: { col: number; row: number }[]; lastMove?: ConfirmedMove | null; checkedGeneralId?: string | null }>()
 const emit = defineEmits<{ cell: [col: number, row: number] }>()
 const cells = Array.from({ length: 90 }, (_, n) => ({ col: n % 9, row: Math.floor(n / 9) }))
 function choose(col: number, row: number) { if (!props.disabled) { const p = displayCell(col, row, props.flipped); emit('cell', p.col, p.row) } }
@@ -15,14 +16,20 @@ function choose(col: number, row: number) { if (!props.disabled) { const p = dis
       <path d="M190 40L290 140M290 40L190 140M190 390L290 490M290 390L190 490"/>
     </g>
     <g fill="#806043" font-size="20" text-anchor="middle"><text x="140" y="272">SỞ HÀ</text><text x="340" y="272">HÁN GIỚI</text></g>
+    <g v-if="lastMove" pointer-events="none" fill="#cb9225" opacity=".35">
+      <circle data-last-from="true" :cx="boardPoint(lastMove.fromCol,lastMove.fromRow,flipped).x" :cy="boardPoint(lastMove.fromCol,lastMove.fromRow,flipped).y" r="24"/>
+      <circle data-last-to="true" :cx="boardPoint(lastMove.toCol,lastMove.toRow,flipped).x" :cy="boardPoint(lastMove.toCol,lastMove.toRow,flipped).y" r="24"/>
+    </g>
+    <circle v-for="to in destinations || []" :key="`legal-${to.col}-${to.row}`" :data-legal="`${to.col}-${to.row}`" :cx="boardPoint(to.col,to.row,flipped).x" :cy="boardPoint(to.col,to.row,flipped).y" r="11" fill="#297349" opacity=".65" pointer-events="none"/>
     <g v-for="cell in cells" :key="`${cell.col}-${cell.row}`" :transform="`translate(${40+cell.col*50},${40+cell.row*50})`" role="button" tabindex="0"
        :aria-label="`Cột ${displayCell(cell.col,cell.row,flipped).col}, hàng ${displayCell(cell.col,cell.row,flipped).row}`" :data-pos="`${displayCell(cell.col,cell.row,flipped).col}-${displayCell(cell.col,cell.row,flipped).row}`"
        @click="choose(cell.col,cell.row)" @keydown.enter.prevent="choose(cell.col,cell.row)" @keydown.space.prevent="choose(cell.col,cell.row)">
       <circle r="24" fill="transparent"/>
     </g>
     <g v-for="piece in pieces" :key="piece.id" :transform="`translate(${boardPoint(piece.position.col,piece.position.row,flipped).x},${boardPoint(piece.position.col,piece.position.row,flipped).y})`" pointer-events="none">
-      <circle v-if="selected===piece.id" r="24" fill="#a2c88e" stroke="#297349" stroke-width="3"/>
+      <circle v-if="selected===piece.id" :data-selected="piece.id" r="24" fill="#a2c88e" stroke="#297349" stroke-width="3"/>
       <image :href="`/pieces/${piece.side.toLowerCase()}-${piece.type.toLowerCase()}.svg`" x="-22" y="-22" width="44" height="44"/>
+      <circle v-if="checkedGeneralId===piece.id" data-check="true" r="24" fill="none" stroke="#b92323" stroke-width="4"/>
     </g>
   </svg>
 </template>

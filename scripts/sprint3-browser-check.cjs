@@ -4,6 +4,7 @@ const path = require('node:path');
 const {spawn} = require('node:child_process');
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const root = path.resolve(__dirname,'..');
+const temporary = require('node:os').tmpdir();
 const api = 'http://127.0.0.1:5000', web = 'http://127.0.0.1:5173';
 const results = [];
 const children = [];
@@ -26,9 +27,9 @@ async function login(page,username) {
 }
 async function waitText(page,value) { await page.getByText(value,{exact:false}).first().waitFor({timeout:20000}); }
 (async()=>{
-  const db='/tmp/gct-browser-'+Date.now()+'.db';
-  start(process.env.DOTNET_PATH||'dotnet',[path.join(root,'src/backend/GameCoTuong.Api/bin/Debug/net10.0/GameCoTuong.Api.dll')],path.join(root,'src/backend/GameCoTuong.Api'),{Database__Provider:'Sqlite',ConnectionStrings__GameDatabase:'Data Source='+db,ASPNETCORE_ENVIRONMENT:'Development',ASPNETCORE_URLS:api},'/tmp/gct-e2e-api.log');
-  start(process.execPath,[path.join(root,'src/frontend/node_modules/vite/bin/vite.js'),'--host','127.0.0.1','--port','5173','--strictPort'],path.join(root,'src/frontend'),{VITE_API_BASE_URL:api},'/tmp/gct-e2e-vite.log');
+  const db=path.join(temporary,'gct-browser-'+Date.now()+'.db');
+  start(process.env.DOTNET_PATH||'dotnet',[path.join(root,'src/backend/GameCoTuong.Api/bin',process.env.DOTNET_CONFIGURATION||'Debug','net10.0/GameCoTuong.Api.dll')],path.join(root,'src/backend/GameCoTuong.Api'),{Database__Provider:'Sqlite',ConnectionStrings__GameDatabase:'Data Source='+db,ASPNETCORE_ENVIRONMENT:'Development',ASPNETCORE_URLS:api},path.join(temporary,'gct-e2e-api.log'));
+  start(process.execPath,[path.join(root,'src/frontend/node_modules/vite/bin/vite.js'),'--host','127.0.0.1','--port','5173','--strictPort'],path.join(root,'src/frontend'),{VITE_API_BASE_URL:api},path.join(temporary,'gct-e2e-vite.log'));
   await Promise.all([ready(api+'/health'),ready(web)]);
   browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_PATH?{executablePath:process.env.CHROMIUM_PATH}:{}),args:['--no-sandbox','--no-zygote','--single-process','--in-process-gpu','--disable-features=AudioServiceOutOfProcess,IsolateOrigins,site-per-process','--disable-site-isolation-trials','--no-proxy-server','--disable-dev-shm-usage','--allow-loopback-in-peer-connection','--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader'],env:{...process.env,...(process.env.CHROME_LIBS?{LD_LIBRARY_PATH:process.env.CHROME_LIBS}:{}),...(process.env.CHROME_FONTS?{FONTCONFIG_PATH:process.env.CHROME_FONTS}:{}),...(process.env.VK_ICD_FILENAMES?{VK_ICD_FILENAMES:process.env.VK_ICD_FILENAMES}:{})}});
   const context=await browser.newContext({permissions:['camera','microphone'],viewport:{width:1280,height:1000}});
@@ -61,4 +62,4 @@ async function waitText(page,value) { await page.getByText(value,{exact:false}).
   await black.screenshot({path:path.join(root,'artifacts/sprint3/mobile.png'),fullPage:true});results.push('390px mobile layout has no horizontal overflow.');
   red.on('dialog',d=>d.accept());await red.getByRole('button',{name:'Đầu hàng',exact:true}).click();await waitText(black,'Bạn thắng');results.push('Resignation finishes both screens with the same winner.');
   assert.deepEqual(errors,[]);fs.writeFileSync(path.join(root,'artifacts/sprint3/browser-results.json'),JSON.stringify({passed:true,results},null,2));console.log(JSON.stringify({passed:true,results},null,2));
-})().catch(async error=>{console.error(error);for(let i=0;i<pages.length;i++){console.error('PAGE '+i+': '+await pages[i].locator('body').innerText().catch(()=>''));console.error(await pages[i].evaluate(()=>window.__testPeers?.map(p=>({state:p.connectionState,ice:p.iceConnectionState,local:p.localDescription?.sdp.match(/a=candidate/g)?.length,remote:p.remoteDescription?.sdp.match(/a=candidate/g)?.length}))).catch(()=>null));await pages[i].screenshot({path:'/tmp/gct-failure-'+i+'.png',fullPage:true}).catch(()=>{})}process.exitCode=1}).finally(async()=>{await browser?.close();children.forEach(p=>p.kill('SIGTERM'))});
+})().catch(async error=>{console.error(error);for(let i=0;i<pages.length;i++){console.error('PAGE '+i+': '+await pages[i].locator('body').innerText().catch(()=>''));console.error(await pages[i].evaluate(()=>window.__testPeers?.map(p=>({state:p.connectionState,ice:p.iceConnectionState,local:p.localDescription?.sdp.match(/a=candidate/g)?.length,remote:p.remoteDescription?.sdp.match(/a=candidate/g)?.length}))).catch(()=>null));await pages[i].screenshot({path:path.join(temporary,'gct-failure-'+i+'.png'),fullPage:true}).catch(()=>{})}process.exitCode=1}).finally(async()=>{await browser?.close();children.forEach(p=>p.kill('SIGTERM'))});
