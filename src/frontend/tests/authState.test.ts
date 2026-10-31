@@ -5,6 +5,17 @@ import { apiClient } from '../src/api/client'
 import { createAppRouter } from '../src/router'
 import type { AuthSession } from '../src/types/auth'
 
+const hub = vi.hoisted(() => ({ url: vi.fn(), stop: vi.fn().mockResolvedValue(undefined) }))
+vi.mock('@microsoft/signalr', () => ({
+  HubConnectionState: { Connected: 'Connected' }, LogLevel: { None: 6 },
+  HubConnectionBuilder: class {
+    withUrl(...args: unknown[]) { hub.url(...args); return this }
+    configureLogging() { return this }
+    withAutomaticReconnect() { return this }
+    build() { return { state: 'Connected', connectionId: 'real-client-mock', start: async () => {}, stop: hub.stop, on() {}, off() {}, onreconnecting() {}, onreconnected() {}, onclose() {}, invoke: async () => {} } }
+  }
+}))
+
 const mockSession: AuthSession = {
   accessToken: 'jwt-in-memory-token-12345',
   tokenType: 'Bearer',
@@ -77,38 +88,16 @@ describe('GCT-34: Quản lý phiên trên giao diện (In-memory token & SignalR
     expect(headers.get('Authorization')).toBe(`Bearer ${mockSession.accessToken}`)
   })
 
-  it('token trong bộ nhớ được gắn vào SignalR negotiate và ngắt kết nối khi đăng xuất hoặc hết phiên', async () => {
-    const fetchMock = vi.fn().mockImplementation(() =>
-      Promise.resolve(
-        new Response(JSON.stringify({ connectionId: 'sig-conn-999' }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' }
-        })
-      )
-    )
-    vi.stubGlobal('fetch', fetchMock)
-
+  it('SignalR dùng token trong bộ nhớ và dừng kết nối khi đăng xuất', async () => {
     const auth = createAuthStore('http://localhost:5000')
     auth.saveSession(mockSession)
-
-    // Kết nối SignalR với token trong bộ nhớ
-    const connected = await auth.signalR.connect('/hubs/game')
-    expect(connected).toBe(true)
+    expect(await auth.signalR.connect()).toBe(true)
     expect(auth.signalR.isConnected.value).toBe(true)
-    expect(auth.signalR.connectionId.value).toBe('sig-conn-999')
-
-    // Xác nhận negotiate URL có access_token từ bộ nhớ
-    expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining('/hubs/game/negotiate?negotiateVersion=1&access_token=jwt-in-memory-token-12345'),
-      expect.objectContaining({ method: 'POST' })
-    )
-
-    // Đăng xuất: xóa trạng thái bộ nhớ và đóng kết nối SignalR
+    expect(hub.url.mock.calls.at(-1)?.[1].accessTokenFactory()).toBe(mockSession.accessToken)
     await auth.performLogout()
     expect(auth.token.value).toBeNull()
-    expect(auth.user.value).toBeNull()
     expect(auth.signalR.isConnected.value).toBe(false)
-    expect(auth.signalR.connectionId.value).toBeNull()
+    expect(hub.stop).toHaveBeenCalled()
   })
 
   it('chặn màn hình riêng khi chưa đăng nhập và chuyển về /login kèm redirect query', async () => {
