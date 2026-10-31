@@ -163,6 +163,47 @@ public sealed class CoreApiAcceptanceTests : IDisposable
         var offered=await Data(await black.Client.PostAsync($"/api/v1/matches/{id}/draw",null));Assert.Equal(3,offered.GetProperty("version").GetInt64());
         var repeated=await Data(await black.Client.PostAsync($"/api/v1/matches/{id}/draw",null));Assert.Equal(3,repeated.GetProperty("version").GetInt64());
     }
+    [Fact] public async Task GCT108_match_history_is_persistent_and_visible_only_to_players()
+    {
+        var (red,black,roomId,id)=await Start();
+        await Data(await red.Client.PostAsJsonAsync($"/api/v1/matches/{id}/moves",Move(1)));
+        await Data(await black.Client.PostAsync($"/api/v1/matches/{id}/resign",null));
+        await Data(await black.Client.PostAsync($"/api/v1/matches/{id}/resign",null));
+        await Data(await red.Client.PostAsync($"/api/v1/rooms/{roomId}/close",null));
+
+        var redHistory=await Data(await red.Client.GetAsync("/api/v1/matches"));
+        var redMatch=Assert.Single(redHistory.EnumerateArray());
+        Assert.Equal(id,redMatch.GetProperty("id").GetGuid());
+        Assert.Equal("win",redMatch.GetProperty("outcome").GetString());
+        Assert.Equal("red",redMatch.GetProperty("playerSide").GetString());
+        Assert.Equal(1,redMatch.GetProperty("moveNumber").GetInt32());
+        Assert.Equal("loss",(await Data(await black.Client.GetAsync("/api/v1/matches")))[0].GetProperty("outcome").GetString());
+
+        var detail=await Data(await red.Client.GetAsync($"/api/v1/matches/{id}/history"));
+        Assert.Equal(id,detail.GetProperty("id").GetGuid());
+        Assert.Equal("resignation",detail.GetProperty("resultReason").GetString());
+        Assert.Equal("red",detail.GetProperty("winner").GetString());
+        Assert.Equal(black.Id,detail.GetProperty("opponent").GetProperty("userId").GetGuid());
+        Assert.NotEqual(default,detail.GetProperty("startedAt").GetDateTimeOffset());
+        Assert.NotEqual(default,detail.GetProperty("endedAt").GetDateTimeOffset());
+        Assert.Single(detail.GetProperty("moves").EnumerateArray());
+
+        var (drawRed,drawBlack,_,drawId)=await Start();
+        await Data(await drawRed.Client.PostAsync($"/api/v1/matches/{drawId}/draw",null));
+        await Data(await drawBlack.Client.PostAsync($"/api/v1/matches/{drawId}/draw",null));
+        var drawDetail=await Data(await drawRed.Client.GetAsync($"/api/v1/matches/{drawId}/history"));
+        Assert.Equal("draw",drawDetail.GetProperty("outcome").GetString());
+        Assert.Equal("draw-agreement",drawDetail.GetProperty("resultReason").GetString());
+
+        var outsider=await User("history_outsider");
+        Assert.Empty((await Data(await outsider.Client.GetAsync("/api/v1/matches"))).EnumerateArray());
+        await Error(await outsider.Client.GetAsync($"/api/v1/matches/{id}/history"),HttpStatusCode.Forbidden);
+        var anonymous=Client();
+        await Error(await anonymous.GetAsync("/api/v1/matches"),HttpStatusCode.Unauthorized);
+        using var db=Db();
+        Assert.Equal(1,await db.Matches.CountAsync(m=>m.Id==id));
+        Assert.Equal(1,await db.Moves.CountAsync(m=>m.MatchId==id));
+    }
     public void Dispose() {foreach(var c in clients)c.Dispose();factory.Dispose();root.Dispose();Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();File.Delete(path);}
 
     private sealed class CaptureLogs : ILoggerProvider

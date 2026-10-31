@@ -166,11 +166,90 @@ public sealed class GameService(GameDbContext db)
 
     private async Task<Match> LoadMatch(Guid id, Guid userId)
     {
-        var match = await db.Matches.Include(m => m.Players).SingleOrDefaultAsync(m => m.Id == id)
+        var match = await db.Matches.Include(m => m.Players).ThenInclude(p => p.User)
+            .SingleOrDefaultAsync(m => m.Id == id)
             ?? throw new GameFault("MATCH_NOT_FOUND", "Không tìm thấy trận.", 404);
         if (!match.Players.Any(p => p.UserId == userId)) throw new GameFault("NOT_MATCH_PLAYER", "Bạn không tham gia trận này.", 403);
         return match;
     }
+
+    public async Task<IReadOnlyList<object>> MatchHistory(Guid userId)
+    {
+        var matches = await db.Matches.AsNoTracking()
+            .Where(m => m.Players.Any(p => p.UserId == userId))
+            .Include(m => m.Players).ThenInclude(p => p.User)
+            .ToListAsync();
+
+        return matches.OrderByDescending(match => match.StartedAt)
+            .Select(match => MatchHistorySummary(match, userId)).ToArray();
+    }
+
+    public async Task<object> MatchDetails(Guid id, Guid userId)
+    {
+        var match = await LoadMatch(id, userId);
+        var moves = await db.Moves.AsNoTracking().Where(m => m.MatchId == id).OrderBy(m => m.Ply)
+            .Select(m => new
+            {
+                m.Ply, m.RequestId, m.Side, m.PieceId, m.FromCol, m.FromRow, m.ToCol, m.ToRow,
+                m.CapturedPieceId, m.CreatedAt, m.BoardSnapshotJson
+            }).ToListAsync();
+
+        return new
+        {
+            match.Id, match.Mode, match.Status,
+            outcome = GetOutcome(match, userId),
+            winner = match.Winner,
+            match.ResultReason,
+            playerSide = match.Players.Single(p => p.UserId == userId).Side,
+            opponent = GetOpponent(match, userId),
+            match.StartedAt, match.EndedAt,
+            durationSeconds = Math.Max(0, ((match.EndedAt ?? DateTimeOffset.UtcNow) - match.StartedAt).TotalSeconds),
+            match.RuleSetVersion, match.InitialBoardJson, match.CurrentBoardJson,
+            moves
+        };
+    }
+
+    private static object MatchHistorySummary(Match match, Guid userId)
+    {
+        return new
+        {
+            match.Id, match.Mode, match.Status,
+            outcome = GetOutcome(match, userId),
+            winner = match.Winner,
+            match.ResultReason,
+            playerSide = match.Players.Single(p => p.UserId == userId).Side,
+            opponent = GetOpponent(match, userId),
+            match.StartedAt, match.EndedAt,
+            durationSeconds = Math.Max(0, ((match.EndedAt ?? DateTimeOffset.UtcNow) - match.StartedAt).TotalSeconds),
+            match.MoveNumber
+        };
+    }
+
+    private static string GetOutcome(Match match, Guid userId)
+    {
+        if (IsCancellation(match.Status) || IsCancellation(match.ResultReason)) return "cancelled";
+        if (match.Status != "finished") return "in-progress";
+        if (match.Winner is null) return "draw";
+        return match.Players.Single(p => p.UserId == userId).Side == match.Winner ? "win" : "loss";
+    }
+
+    private static bool IsCancellation(string? value) =>
+        string.Equals(value, "cancelled", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(value, "canceled", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(value, "cancellation", StringComparison.OrdinalIgnoreCase);
+
+    private static MatchOpponentView? GetOpponent(Match match, Guid userId)
+    {
+        var player = match.Players.Single(p => p.UserId == userId);
+        var opponent = match.Players.FirstOrDefault(p => p.UserId != userId);
+        if (match.Mode is "ai" or "pve")
+            return new(null, "Máy", opponent?.Side ?? (player.Side == "red" ? "black" : "red"));
+        if (opponent is not null)
+            return new(opponent.UserId, opponent.User?.DisplayName ?? "Kỳ thủ", opponent.Side);
+        return null;
+    }
+
+    private sealed record MatchOpponentView(Guid? UserId, string DisplayName, string Side);
 
     public async Task<object> MatchSnapshot(Guid id, Guid userId) => await MatchView(await LoadMatch(id, userId));
     private async Task<object> MatchView(Match match)

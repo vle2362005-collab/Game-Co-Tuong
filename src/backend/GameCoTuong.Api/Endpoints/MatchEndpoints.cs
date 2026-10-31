@@ -14,7 +14,9 @@ public static class MatchEndpoints
         foreach (var prefix in new[] { "/api/v1/matches", "/api/matches" })
         {
             var g = app.MapGroup(prefix);
+            g.MapGet("", (HttpContext c, GameService s) => GameApi.Run(c, async u => (object)await s.MatchHistory(u)));
             g.MapGet("/{id:guid}", (Guid id, HttpContext c, GameService s) => GameApi.Run(c, u => s.MatchSnapshot(id, u)));
+            g.MapGet("/{id:guid}/history", (Guid id, HttpContext c, GameService s) => GameApi.Run(c, u => s.MatchDetails(id, u)));
             g.MapGet("/{id:guid}/moves", (Guid id, HttpContext c, GameService s) => GameApi.Run(c, u => s.History(id, u)));
             g.MapPost("/{id:guid}/moves", (Guid id, MoveInput input, HttpContext c, GameService s) => GameApi.Run(c, async u => await Publish(id, await s.Move(id, u, input), c)));
             g.MapPost("/{id:guid}/resign", (Guid id, HttpContext c, GameService s) => GameApi.Run(c, async u => await Publish(id, await s.End(id, u, false), c)));
