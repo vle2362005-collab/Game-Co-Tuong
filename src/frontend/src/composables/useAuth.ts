@@ -28,6 +28,7 @@ export function createAuthStore(apiBaseUrl: string = 'http://localhost:5000') {
 
   // Guard against redirect loops
   let isHandlingExpiry = false
+  let expiryTimer: ReturnType<typeof setTimeout> | null = null
 
   const isAuthenticated = computed(() => !!token.value && !!user.value)
   const isPlaying = computed(() => !!activeMatch.value)
@@ -47,6 +48,9 @@ export function createAuthStore(apiBaseUrl: string = 'http://localhost:5000') {
 
   function saveSession(session: AuthSession) {
     // Save ONLY into memory
+    if (expiryTimer) clearTimeout(expiryTimer)
+    const delay = Math.max(0, Date.parse(session.expiresAt) - Date.now())
+    if (Number.isFinite(delay)) expiryTimer = setTimeout(handleSessionExpired, Math.min(delay, 2147483647))
     token.value = session.accessToken
     user.value = session.user
     sessionExpired.value = false
@@ -63,6 +67,8 @@ export function createAuthStore(apiBaseUrl: string = 'http://localhost:5000') {
   }
 
   function clearSession() {
+    if (expiryTimer) clearTimeout(expiryTimer)
+    expiryTimer = null
     token.value = null
     user.value = null
     activeMatch.value = null

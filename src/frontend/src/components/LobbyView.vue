@@ -1,213 +1,51 @@
 <script setup lang="ts">
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
-import type { User, MatchInfo } from '../types/auth'
-
-defineProps<{
-  user: User
-}>()
-
-const emit = defineEmits<{
-  (e: 'enterMatch', match: MatchInfo): void
-  (e: 'testExpire'): void
-}>()
-
-const router = useRouter()
-
-function startDemoMatch() {
-  emit('enterMatch', {
-    id: crypto.randomUUID(),
-    roomId: crypto.randomUUID(),
-    side: 'red',
-    opponentName: 'Kỳ thủ phương Bắc'
-  })
+import { useAuth } from '../composables/useAuth'
+import { gameApi, type Room } from '../api/game'
+const auth = useAuth(), router = useRouter()
+const rooms = ref<Room[]>([]), name = ref('Phòng cờ của tôi'), code = ref(''), error = ref(''), busy = ref(false), loading = ref(true)
+const disposers: (() => void)[] = []
+let createRequest = crypto.randomUUID()
+async function load() {
+  try { rooms.value = await gameApi.rooms() } catch (e) { error.value = String(e) } finally { loading.value = false }
 }
-
-function goToRoom() {
-  if (router) {
-    router.push('/rooms/room-demo-01')
-  }
+async function act(action: () => Promise<Room>) {
+  if (busy.value) return
+  busy.value = true; error.value = ''
+  try { const room = await action(); createRequest = crypto.randomUUID(); await router.push(`/rooms/${room.id}`) }
+  catch (e) { error.value = e instanceof Error ? e.message : String(e) }
+  finally { busy.value = false }
 }
-
-function goToHistory() {
-  if (router) {
-    router.push('/history')
-  }
-}
+function createRoom() { return act(() => gameApi.create(name.value, createRequest)) }
+function joinCode(value: string) { return act(() => gameApi.join(value.trim())) }
+onMounted(async () => {
+  await load()
+  disposers.push(auth.signalR.on('LobbyChanged', () => { void load() }))
+  disposers.push(auth.signalR.on('Reconnected', () => { void auth.signalR.invoke('JoinLobby'); void load() }))
+  if (await auth.signalR.connect()) await auth.signalR.invoke('JoinLobby')
+  else error.value = 'Chưa kết nối trực tuyến. Nhấn tải lại để thử lại.'
+})
+onUnmounted(() => { disposers.forEach(fn => fn()); void auth.signalR.invoke('LeaveLobby').catch(() => {}) })
 </script>
-
 <template>
-  <div class="lobby-card">
-    <div class="user-greeting">
-      <span class="user-avatar" aria-hidden="true">♟️</span>
-      <div>
-        <h2>Xin chào, {{ user.displayName }}!</h2>
-        <p class="user-handle">@{{ user.username }} · Trạng thái: Sảnh chờ</p>
-      </div>
-    </div>
-
-    <div class="action-grid">
-      <div class="action-box">
-        <h3>Vào bàn thi đấu</h3>
-        <p>Bắt đầu hoặc tham gia một ván cờ mới để kiểm tra luồng đầu hàng trước khi đăng xuất.</p>
-        <button
-          type="button"
-          class="btn-primary"
-          id="enter-match-btn"
-          @click="startDemoMatch"
-        >
-          Tham gia ván cờ ngay ⚔️
-        </button>
-      </div>
-
-      <div class="action-box">
-        <h3>Phòng cờ & Ghép bàn</h3>
-        <p>Tạo phòng riêng hoặc tham gia phòng cờ có sẵn để chọn phe Đỏ/Đen.</p>
-        <button
-          type="button"
-          class="btn-primary"
-          id="enter-room-btn"
-          @click="goToRoom"
-        >
-          Vào phòng cờ 🏰
-        </button>
-      </div>
-
-      <div class="action-box subtle">
-        <h3>Lịch sử thi đấu</h3>
-        <p>Xem lại kết quả các ván đấu đã qua, tỷ lệ thắng/thua và số nước cờ.</p>
-        <button
-          type="button"
-          class="btn-outline"
-          id="view-history-btn"
-          @click="goToHistory"
-        >
-          Xem lịch sử đấu 📜
-        </button>
-      </div>
-
-      <div class="action-box subtle">
-        <h3>Kiểm tra hết hạn phiên</h3>
-        <p>Mô phỏng sự cố token hết hạn hoặc nhận mã lỗi 401 để kiểm tra việc đóng kết nối an toàn.</p>
-        <button
-          type="button"
-          class="btn-outline"
-          id="simulate-expire-btn"
-          @click="emit('testExpire')"
-        >
-          Mô phỏng phiên hết hạn (401) ⏱️
-        </button>
-      </div>
-    </div>
-  </div>
+  <section class="lobby">
+    <h1>Sảnh cờ</h1><p>Tạo phòng hoặc nhập mã để chơi với bạn.</p>
+    <p v-if="error" role="alert" class="error">{{ error }}</p>
+    <form class="actions" @submit.prevent="createRoom">
+      <label>Tên phòng <input v-model="name" maxlength="80" required></label><button :disabled="busy">Tạo phòng</button>
+    </form>
+    <form class="actions" @submit.prevent="joinCode(code)">
+      <label>Mã phòng <input v-model="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required></label><button :disabled="busy">Tham gia</button>
+    </form>
+    <button :disabled="busy" @click="load">Tải lại</button>
+    <p v-if="loading">Đang tải phòng…</p><p v-else-if="!rooms.length">Chưa có phòng. Hãy tạo phòng đầu tiên.</p>
+    <ul class="room-list"><li v-for="room in rooms" :key="room.id"><div><strong>{{ room.name }}</strong><br>Mã {{ room.code }} · {{ room.members.length }}/2 · {{ room.status }}</div>
+      <button :disabled="busy || room.members.length === 2 || room.status !== 'waiting'" @click="joinCode(room.code)">Vào phòng</button>
+      <button v-if="room.members.some(m => m.userId === auth.user.value?.id)" @click="router.push(`/rooms/${room.id}`)">Trở lại</button>
+    </li></ul>
+  </section>
 </template>
-
 <style scoped>
-.lobby-card {
-  background: #fffef9;
-  border: 1px solid #d6dcd0;
-  border-radius: 16px;
-  padding: 32px 28px;
-  max-width: 680px;
-  margin: 32px auto;
-  box-shadow: 0 4px 16px rgba(23, 43, 38, 0.05);
-}
-
-.user-greeting {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding-bottom: 24px;
-  border-bottom: 1px solid #eaf0e7;
-  margin-bottom: 24px;
-}
-
-.user-avatar {
-  font-size: 2.2rem;
-  background: #f5f3ec;
-  border: 1px solid #d6dcd0;
-  border-radius: 50%;
-  width: 56px;
-  height: 56px;
-  display: grid;
-  place-items: center;
-}
-
-h2 {
-  font-family: Georgia, "Times New Roman", serif;
-  margin: 0 0 4px;
-  color: #172b26;
-  font-size: 1.4rem;
-}
-
-.user-handle {
-  margin: 0;
-  font-size: 0.88rem;
-  color: #53625b;
-}
-
-.action-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 20px;
-}
-
-@media (max-width: 600px) {
-  .action-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-.action-box {
-  background: #fbfaf6;
-  border: 1px solid #d6dcd0;
-  border-radius: 12px;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-}
-
-.action-box h3 {
-  margin: 0 0 8px;
-  font-size: 1.05rem;
-  color: #172b26;
-}
-
-.action-box p {
-  font-size: 0.85rem;
-  color: #65746d;
-  margin: 0 0 16px;
-  flex-grow: 1;
-}
-
-.btn-primary {
-  background: #9b4036;
-  color: #fffef9;
-  border: none;
-  border-radius: 8px;
-  padding: 10px 16px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-
-.btn-primary:hover {
-  background: #b84f43;
-}
-
-.btn-outline {
-  background: transparent;
-  color: #53625b;
-  border: 1px solid #d6dcd0;
-  border-radius: 8px;
-  padding: 10px 16px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn-outline:hover {
-  background: #eaf0e7;
-  color: #172b26;
-}
+.lobby{max-width:760px;width:100%;margin:auto}.actions{display:flex;gap:12px;align-items:end;margin:18px 0}label{display:grid;gap:6px;flex:1}input{padding:12px;border:1px solid #bccbc3;border-radius:8px;font:inherit}.room-list{padding:0;list-style:none}.room-list li{display:flex;gap:12px;align-items:center;padding:18px;border:1px solid #d1ddd5;border-radius:12px;margin:12px 0}.room-list li div{flex:1}.error{color:#a12525}button{padding:11px 18px;cursor:pointer}button:disabled{opacity:.5;cursor:default}
 </style>

@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuth } from './composables/useAuth'
 import AppHeader from './components/AppHeader.vue'
 import SurrenderModal from './components/SurrenderModal.vue'
-import type { MatchInfo } from './types/auth'
 import type { RegisterPayload } from './api/auth'
 
 const route = useRoute()
@@ -12,13 +11,6 @@ const router = useRouter()
 
 const apiBaseUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL) || 'http://localhost:5000'
 const auth = useAuth(apiBaseUrl)
-
-const defaultMatch = computed<MatchInfo>(() => auth.activeMatch.value || {
-  id: 'demo-match-01',
-  roomId: 'demo-room-01',
-  side: 'red',
-  opponentName: 'Kỳ thủ phương Bắc'
-})
 
 async function handleLogin(payload: { username: string; password: string }) {
   const ok = await auth.login(payload.username, payload.password)
@@ -47,32 +39,6 @@ async function handleConfirmSurrender() {
   await auth.confirmSurrenderAndLogout()
   if (router && router.currentRoute.value.path !== '/login') {
     router.push('/login')
-  }
-}
-
-function handleEnterMatch(match: MatchInfo) {
-  auth.enterMatch(match)
-  if (router) {
-    router.push(`/game/${match.roomId}`)
-  }
-}
-
-function handleStartMatch(payload: { roomId: string; side: 'red' | 'black'; opponentName: string }) {
-  auth.enterMatch({
-    id: crypto.randomUUID(),
-    roomId: payload.roomId,
-    side: payload.side,
-    opponentName: payload.opponentName
-  })
-  if (router) {
-    router.push(`/game/${payload.roomId}`)
-  }
-}
-
-function handleLeaveMatch() {
-  auth.leaveMatch()
-  if (router) {
-    router.push('/lobby')
   }
 }
 
@@ -105,12 +71,8 @@ watch(
           :is-submitting="auth.isSubmitting.value"
           :error-message="auth.errorMessage.value"
           :field-errors="auth.fieldErrors.value"
-          :match="defaultMatch"
           @login="handleLogin"
           @register="handleRegister"
-          @enter-match="handleEnterMatch"
-          @start-match="handleStartMatch"
-          @leave-room="handleLeaveMatch"
           @surrender="handleLogout"
           @test-expire="auth.handleSessionExpired"
         />
@@ -126,7 +88,7 @@ watch(
 
     <footer>
       <span>Vue 3 · Vue Router 4 · TypeScript · ASP.NET Core</span>
-      <span>Dự án Game Cờ Tướng · Nhánh GCT-33-auth-forms</span>
+      <span>Game Cờ Tướng · Sprint 3</span>
     </footer>
   </main>
 </template>

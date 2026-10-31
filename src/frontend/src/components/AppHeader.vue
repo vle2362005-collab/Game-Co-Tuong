@@ -173,6 +173,13 @@ const emit = defineEmits<{
 }
 
 @media (max-width: 600px) {
+  .app-header { flex-wrap: wrap; gap: 12px; letter-spacing: 0; }
+  .brand { flex: 1; min-width: 180px; }
+  .mark { flex-shrink: 0; }
+  .header-nav { order: 3; flex: 1 0 100%; justify-content: center; }
+  .nav-link, .logout-btn { white-space: nowrap; }
+  .user-nav { margin-left: auto; gap: 8px; }
+  .match-indicator { display: none; }
   .display-name {
     display: none;
   }
