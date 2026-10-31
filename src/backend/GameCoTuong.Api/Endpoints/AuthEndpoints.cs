@@ -168,126 +168,26 @@ public static class AuthEndpoints
         ), statusCode: statusCode);
     }
 
-    public static async Task<IResult> HandleLogoutAsync(
-        HttpContext context,
-        ITokenService tokenService,
-        GameDbContext dbContext,
-        CancellationToken cancellationToken)
+    public static Task<IResult> HandleLogoutAsync(HttpContext context, GameCoTuong.Infrastructure.Game.GameService game)
     {
-        var reqId = ExtractRequestId(context);
-        var authHeader = context.Request.Headers.Authorization.ToString();
-        if (string.IsNullOrWhiteSpace(authHeader) || !authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+        return GameApi.Run(context, async userId =>
         {
-            return Results.Json(new ApiErrorEnvelope(
-                reqId,
-                DateTimeOffset.UtcNow,
-                new ApiErrorDetail(
-                    "UNAUTHORIZED",
-                    "Thiếu hoặc sai định dạng Authorization Bearer token.",
-                    false,
-                    null,
-                    null,
-                    new Dictionary<string, string[]>()
-                )
-            ), statusCode: StatusCodes.Status401Unauthorized);
-        }
-
-        var token = authHeader.Substring("Bearer ".Length).Trim();
-        var principal = tokenService.ValidateToken(token);
-        if (principal is null)
-        {
-            return Results.Json(new ApiErrorEnvelope(
-                reqId,
-                DateTimeOffset.UtcNow,
-                new ApiErrorDetail(
-                    "UNAUTHORIZED",
-                    "Phiên đăng nhập không hợp lệ hoặc đã hết hạn.",
-                    false,
-                    null,
-                    null,
-                    new Dictionary<string, string[]>()
-                )
-            ), statusCode: StatusCodes.Status401Unauthorized);
-        }
-
-        var jti = principal.FindFirst("jti")?.Value;
-        var sub = principal.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
-               ?? principal.FindFirst("sub")?.Value;
-
-        try
-        {
-            if (!string.IsNullOrEmpty(jti) && Guid.TryParse(sub, out var userId))
+            var jti = context.User.FindFirst("jti")?.Value;
+            if (string.IsNullOrEmpty(jti)) throw new GameCoTuong.Application.Game.GameFault("UNAUTHORIZED", "Phiên không hợp lệ.", 401);
+            var exp = context.User.FindFirst("exp")?.Value;
+            var expires = long.TryParse(exp, out var seconds) ? DateTimeOffset.FromUnixTimeSeconds(seconds) : DateTimeOffset.UtcNow.AddDays(1);
+            var rooms = await game.Logout(userId, jti, expires);
+            var hub = context.RequestServices.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<GameCoTuong.Api.Hubs.GameHub>>();
+            foreach (var room in rooms)
             {
-                // 1. Record token revocation
-                var isAlreadyRevoked = await dbContext.RevokedTokens.AnyAsync(r => r.Jti == jti, cancellationToken);
-                if (!isAlreadyRevoked)
-                {
-                    var expClaim = principal.FindFirst("exp")?.Value;
-                    var expiresAt = long.TryParse(expClaim, out var expSeconds)
-                        ? DateTimeOffset.FromUnixTimeSeconds(expSeconds)
-                        : DateTimeOffset.UtcNow.AddHours(24);
-
-                    dbContext.RevokedTokens.Add(new RevokedToken
-                    {
-                        Jti = jti,
-                        UserId = userId,
-                        RevokedAt = DateTimeOffset.UtcNow,
-                        ExpiresAt = expiresAt
-                    });
-                }
-
-                // 2. Clean up active room and match status
-                var activeMemberships = await dbContext.RoomMemberships
-                    .Include(m => m.Room)
-                    .Where(m => m.UserId == userId && m.LeftAt == null)
-                    .ToListAsync(cancellationToken);
-
-                foreach (var m in activeMemberships)
-                {
-                    m.LeftAt = DateTimeOffset.UtcNow;
-                    m.IsConnected = false;
-
-                    if (m.Room is not null)
-                    {
-                        if (m.Room.CurrentMatchId.HasValue && string.Equals(m.Room.Status, "playing", StringComparison.OrdinalIgnoreCase))
-                        {
-                            var match = await dbContext.Matches.FirstOrDefaultAsync(mat => mat.Id == m.Room.CurrentMatchId.Value, cancellationToken);
-                            if (match is not null && string.Equals(match.Status, "playing", StringComparison.OrdinalIgnoreCase))
-                            {
-                                match.Status = "finished";
-                                match.Winner = string.Equals(m.Side, "red", StringComparison.OrdinalIgnoreCase) ? "black" : "red";
-                                match.ResultReason = "resignation";
-                                match.EndedAt = DateTimeOffset.UtcNow;
-                            }
-                        }
-                        else if (string.Equals(m.Room.Status, "waiting", StringComparison.OrdinalIgnoreCase))
-                        {
-                            if (m.Room.HostUserId == userId)
-                            {
-                                m.Room.Status = "closed";
-                                m.Room.ClosedAt = DateTimeOffset.UtcNow;
-                            }
-                        }
-                    }
-                }
-
-                await dbContext.SaveChangesAsync(cancellationToken);
+                context.RequestServices.GetRequiredService<GameCoTuong.Api.Hubs.VideoCalls>().End(room.Id, userId);
+                await Microsoft.AspNetCore.SignalR.ClientProxyExtensions.SendAsync(hub.Clients.Group(GameCoTuong.Api.Hubs.GameHub.GetRoomGroupName(room.Id)), "CallEnded");
+                if (room.MatchId is Guid matchId)
+                    await Microsoft.AspNetCore.SignalR.ClientProxyExtensions.SendAsync(hub.Clients.Group(GameCoTuong.Api.Hubs.GameHub.GetRoomGroupName(room.Id)), "MatchChanged", await game.MatchSnapshot(matchId, userId));
+                await GameApi.Publish(room, context);
             }
-        }
-        catch (Exception ex)
-        {
-            return Results.Problem(detail: ex.ToString(), statusCode: StatusCodes.Status500InternalServerError);
-        }
-
-        return Results.Ok(new ApiSuccessResponse<LogoutResponseDto>(
-            reqId,
-            DateTimeOffset.UtcNow,
-            new LogoutResponseDto(
-                Acknowledged: true,
-                Revoked: true,
-                PolicyMessage: "JWT đã được thu hồi trong cơ sở dữ liệu. Trường hợp không có bảng thu hồi (stateless JWT), token cũ vẫn có hiệu lực cho đến thời điểm hết hạn (exp)."
-            )
-        ));
+            return new LogoutResponseDto(true, true, "JWT đã được thu hồi; phiên cũ không tiếp tục sử dụng được.");
+        });
     }
 
     public static Guid ExtractRequestId(HttpContext context)

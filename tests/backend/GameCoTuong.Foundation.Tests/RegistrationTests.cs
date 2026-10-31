@@ -18,7 +18,7 @@ namespace GameCoTuong.Foundation.Tests;
 
 public sealed class RegistrationTests : IClassFixture<WebApplicationFactory<Program>>
 {
-    private const string ConnectionString = "Server=.\\SQLEXPRESS;Database=GameCoTuong;Integrated Security=True;Encrypt=True;TrustServerCertificate=True";
+    private static readonly string ConnectionString = TestDatabase.ConnectionString;
     private readonly WebApplicationFactory<Program> factory;
     private readonly HttpClient client;
     private readonly PasswordHasher passwordHasher = new();
@@ -31,6 +31,7 @@ public sealed class RegistrationTests : IClassFixture<WebApplicationFactory<Prog
             {
                 config.AddInMemoryCollection(new Dictionary<string, string?>
                 {
+                    ["Database:Provider"] = "Sqlite",
                     ["ConnectionStrings:GameDatabase"] = ConnectionString
                 });
             });
@@ -46,7 +47,7 @@ public sealed class RegistrationTests : IClassFixture<WebApplicationFactory<Prog
     private static GameDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<GameDbContext>()
-            .UseSqlServer(ConnectionString)
+            .UseSqlite(ConnectionString)
             .Options;
         return new GameDbContext(options);
     }

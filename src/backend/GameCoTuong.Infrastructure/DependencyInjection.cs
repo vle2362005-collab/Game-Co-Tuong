@@ -16,8 +16,12 @@ public static class DependencyInjection
             ?? "Server=.\\SQLEXPRESS;Database=GameCoTuong;Integrated Security=True;Encrypt=True;TrustServerCertificate=True";
 
         services.AddDbContext<GameDbContext>(options =>
-            options.UseSqlServer(connectionString, sql =>
-                sql.MigrationsAssembly(typeof(GameDbContext).Assembly.FullName)));
+        {
+            if (configuration["Database:Provider"] == "Sqlite")
+                options.UseSqlite(configuration.GetConnectionString("GameDatabase") ?? "Data Source=game-local.db");
+            else options.UseSqlServer(connectionString, sql =>
+                sql.MigrationsAssembly(typeof(GameDbContext).Assembly.FullName));
+        });
 
         services.AddSingleton<IPasswordHasher, PasswordHasher>();
         services.Configure<JwtOptions>(options =>
@@ -40,6 +44,7 @@ public static class DependencyInjection
         services.AddScoped<IRoomAuthorizationService, RoomAuthorizationService>();
         services.AddScoped<IRegistrationService, RegistrationService>();
         services.AddScoped<ILoginService, LoginService>();
+        services.AddScoped<Game.GameService>();
 
         return services;
     }

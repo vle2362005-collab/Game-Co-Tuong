@@ -11,7 +11,7 @@ namespace GameCoTuong.Infrastructure.Auth;
 
 public sealed class JwtTokenService : ITokenService
 {
-    private static readonly byte[] FallbackKey = Encoding.UTF8.GetBytes("GameCoTuong-DefaultSecretKeyForLocalDevAndTests-MustBeAtLeast32Bytes!");
+    private static readonly byte[] FallbackKey = RandomNumberGenerator.GetBytes(32);
     private readonly JwtOptions _options;
     private readonly byte[] _key;
 
@@ -175,7 +175,8 @@ public sealed class JwtTokenService : ITokenService
             new(ClaimTypes.NameIdentifier, payload.Sub),
             new(ClaimTypes.Name, payload.Name),
             new("displayName", payload.DisplayName),
-            new("jti", payload.Jti)
+            new("jti", payload.Jti),
+            new("exp", payload.Exp.ToString(System.Globalization.CultureInfo.InvariantCulture))
         };
 
         var identity = new ClaimsIdentity(claims, "Bearer");

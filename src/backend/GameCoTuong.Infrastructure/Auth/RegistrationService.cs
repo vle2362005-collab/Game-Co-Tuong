@@ -34,14 +34,14 @@ public sealed class RegistrationService : IRegistrationService
 
         // 3. Kiểm tra trước sự tồn tại trong CSDL
         var isUsernameTaken = await _dbContext.Users
-            .AnyAsync(u => u.NormalizedUsername == normalizedUsername, cancellationToken);
+            .AnyAsync(u => u.NormalizedUsername.ToLower() == normalizedUsername, cancellationToken);
         if (isUsernameTaken)
         {
             return RegistrationResult.UsernameTaken();
         }
 
         var isEmailTaken = await _dbContext.Users
-            .AnyAsync(u => u.NormalizedEmail == normalizedEmail, cancellationToken);
+            .AnyAsync(u => u.NormalizedEmail.ToLower() == normalizedEmail, cancellationToken);
         if (isEmailTaken)
         {
             return RegistrationResult.EmailTaken();

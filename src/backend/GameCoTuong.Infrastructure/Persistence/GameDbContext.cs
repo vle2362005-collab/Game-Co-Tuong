@@ -232,6 +232,9 @@ public class GameDbContext : DbContext
 
         // Seed dữ liệu mẫu (GCT-26: dữ liệu demo riêng, không chứa tài khoản thật)
         SeedDemoData(modelBuilder);
+        if (Database.IsSqlite())
+            foreach (var property in modelBuilder.Model.GetEntityTypes().SelectMany(e => e.GetProperties()))
+                if (property.GetDefaultValueSql() == "SYSDATETIMEOFFSET()") property.SetDefaultValueSql("CURRENT_TIMESTAMP");
     }
 
     private static void SeedDemoData(ModelBuilder modelBuilder)

@@ -55,9 +55,9 @@ public sealed class ApiSmokeTests : IClassFixture<TestApiFactory>
     }
 
     [Fact]
-    public async Task Unimplemented_business_endpoint_is_not_a_fake_success()
+    public async Task Rooms_require_authentication()
     {
         using var response = await client.GetAsync("/api/v1/rooms");
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 }

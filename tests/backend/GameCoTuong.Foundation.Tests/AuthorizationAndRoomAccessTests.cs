@@ -22,18 +22,18 @@ namespace GameCoTuong.Foundation.Tests;
 
 public sealed class AuthorizationAndRoomAccessTests : IClassFixture<WebApplicationFactory<Program>>
 {
-    private const string ConnectionString = "Server=.\\SQLEXPRESS;Database=GameCoTuong;Integrated Security=True;Encrypt=True;TrustServerCertificate=True";
+    private static readonly string ConnectionString = TestDatabase.ConnectionString;
     private readonly WebApplicationFactory<Program> _factory;
 
     public AuthorizationAndRoomAccessTests(WebApplicationFactory<Program> factory)
     {
-        _factory = factory;
+        _factory = TestDatabase.Configure(factory);
     }
 
     private static GameDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<GameDbContext>()
-            .UseSqlServer(ConnectionString)
+            .UseSqlite(ConnectionString)
             .Options;
         return new GameDbContext(options);
     }
@@ -114,12 +114,12 @@ public sealed class AuthorizationAndRoomAccessTests : IClassFixture<WebApplicati
     }
 
     [Fact]
-    public async Task VideoSignal_returns_401_when_token_is_missing()
+    public async Task RoomSnapshot_returns_401_when_token_is_missing()
     {
         using var client = _factory.CreateClient();
         var roomId = Guid.NewGuid();
 
-        var response = await client.PostAsJsonAsync($"/api/v1/rooms/{roomId}/video/signal", new VideoSignalRequest(Guid.NewGuid(), "offer", "sdp-data"));
+        var response = await client.GetAsync($"/api/v1/rooms/{roomId}");
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
 
         var error = await response.Content.ReadFromJsonAsync<ApiErrorEnvelope>();
@@ -381,8 +381,8 @@ public sealed class AuthorizationAndRoomAccessTests : IClassFixture<WebApplicati
                 RoomId = roomId,
                 Status = "playing",
                 SideToMove = "red",
-                InitialBoardJson = "{}",
-                CurrentBoardJson = "{}",
+                InitialBoardJson = GameCoTuong.Engine.Serialization.BoardSerializer.Serialize(GameCoTuong.Engine.Model.BoardInitializer.CreateInitialBoard()),
+                CurrentBoardJson = GameCoTuong.Engine.Serialization.BoardSerializer.Serialize(GameCoTuong.Engine.Model.BoardInitializer.CreateInitialBoard()),
                 StartedAt = DateTimeOffset.UtcNow
             };
             db.Matches.Add(match);
@@ -410,13 +410,13 @@ public sealed class AuthorizationAndRoomAccessTests : IClassFixture<WebApplicati
         // 1. Red user (turn is red) -> 200 OK
         using var redClient = _factory.CreateClient();
         redClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", redToken);
-        var redResp = await redClient.PostAsJsonAsync($"/api/v1/matches/{matchId}/moves", new SubmitMoveRequest(Guid.NewGuid(), "P2-5"));
+        var redResp = await redClient.PostAsJsonAsync($"/api/v1/matches/{matchId}/moves", new GameCoTuong.Application.Game.MoveInput(Guid.NewGuid(), 1, "red-soldier-1", 0, 5));
         Assert.Equal(HttpStatusCode.OK, redResp.StatusCode);
 
         // 2. Black user (not their turn) -> 403 Forbidden (NOT_YOUR_TURN)
         using var blackClient = _factory.CreateClient();
-        blackClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", blackToken);
-        var blackResp = await blackClient.PostAsJsonAsync($"/api/v1/matches/{matchId}/moves", new SubmitMoveRequest(Guid.NewGuid(), "P2-5"));
+        blackClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", redToken);
+        var blackResp = await blackClient.PostAsJsonAsync($"/api/v1/matches/{matchId}/moves", new GameCoTuong.Application.Game.MoveInput(Guid.NewGuid(), 2, "red-soldier-1", 0, 4));
         Assert.Equal(HttpStatusCode.Forbidden, blackResp.StatusCode);
         var blackError = await blackResp.Content.ReadFromJsonAsync<ApiErrorEnvelope>();
         Assert.Equal("NOT_YOUR_TURN", blackError!.Error.Code);
@@ -424,13 +424,13 @@ public sealed class AuthorizationAndRoomAccessTests : IClassFixture<WebApplicati
         // 3. Outsider -> 403 Forbidden (NOT_MATCH_PLAYER)
         using var outsiderClient = _factory.CreateClient();
         outsiderClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", outsiderToken);
-        var outResp = await outsiderClient.PostAsJsonAsync($"/api/v1/matches/{matchId}/moves", new SubmitMoveRequest(Guid.NewGuid(), "P2-5"));
+        var outResp = await outsiderClient.PostAsJsonAsync($"/api/v1/matches/{matchId}/moves", new GameCoTuong.Application.Game.MoveInput(Guid.NewGuid(), 2, "red-soldier-1", 0, 4));
         Assert.Equal(HttpStatusCode.Forbidden, outResp.StatusCode);
         var outError = await outResp.Content.ReadFromJsonAsync<ApiErrorEnvelope>();
         Assert.Equal("NOT_MATCH_PLAYER", outError!.Error.Code);
 
         // 4. Anti-Spoofing: Outsider supplies Red user's ID in body -> Server still detects outsider identity from token and blocks with 403
-        var spoofResp = await outsiderClient.PostAsJsonAsync($"/api/v1/matches/{matchId}/moves", new SubmitMoveRequest(Guid.NewGuid(), "P2-5", redUser.Id));
+        var spoofResp = await outsiderClient.PostAsJsonAsync($"/api/v1/matches/{matchId}/moves", new { requestId = Guid.NewGuid(), expectedVersion = 2, pieceId = "red-soldier-1", toCol = 0, toRow = 4, spoofedUserId = redUser.Id });
         Assert.Equal(HttpStatusCode.Forbidden, spoofResp.StatusCode);
         var spoofError = await spoofResp.Content.ReadFromJsonAsync<ApiErrorEnvelope>();
         Assert.Equal("NOT_MATCH_PLAYER", spoofError!.Error.Code);
@@ -441,7 +441,7 @@ public sealed class AuthorizationAndRoomAccessTests : IClassFixture<WebApplicati
     // ========================================================================
 
     [Fact]
-    public async Task VideoSignal_allows_active_members_and_blocks_outsiders_and_left_members()
+    public async Task RoomSnapshot_allows_active_members_and_blocks_outsiders_and_left_members()
     {
         using var client = _factory.CreateClient();
         var (memberUser, memberToken) = await CreateUserAndLoginAsync(client, "vid_mem");
@@ -491,19 +491,19 @@ public sealed class AuthorizationAndRoomAccessTests : IClassFixture<WebApplicati
         // Active member -> 200 OK
         using var memClient = _factory.CreateClient();
         memClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", memberToken);
-        var memResp = await memClient.PostAsJsonAsync($"/api/v1/rooms/{roomId}/video/signal", new VideoSignalRequest(Guid.NewGuid(), "offer", "sdp-1"));
+        var memResp = await memClient.GetAsync($"/api/v1/rooms/{roomId}");
         Assert.Equal(HttpStatusCode.OK, memResp.StatusCode);
 
         // Left member -> 403 Forbidden
         using var leftClient = _factory.CreateClient();
         leftClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", leftToken);
-        var leftResp = await leftClient.PostAsJsonAsync($"/api/v1/rooms/{roomId}/video/signal", new VideoSignalRequest(Guid.NewGuid(), "offer", "sdp-2"));
+        var leftResp = await leftClient.GetAsync($"/api/v1/rooms/{roomId}");
         Assert.Equal(HttpStatusCode.Forbidden, leftResp.StatusCode);
 
         // Outsider -> 403 Forbidden
         using var outClient = _factory.CreateClient();
         outClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", outsiderToken);
-        var outResp = await outClient.PostAsJsonAsync($"/api/v1/rooms/{roomId}/video/signal", new VideoSignalRequest(Guid.NewGuid(), "offer", "sdp-3"));
+        var outResp = await outClient.GetAsync($"/api/v1/rooms/{roomId}");
         Assert.Equal(HttpStatusCode.Forbidden, outResp.StatusCode);
     }
 
@@ -547,7 +547,7 @@ public sealed class AuthorizationAndRoomAccessTests : IClassFixture<WebApplicati
 
         using var scope = _factory.Services.CreateScope();
         var roomAuthService = scope.ServiceProvider.GetRequiredService<IRoomAuthorizationService>();
-        var hub = new GameHub(roomAuthService);
+        var hub = new GameHub(roomAuthService, scope.ServiceProvider.GetRequiredService<GameCoTuong.Infrastructure.Game.GameService>(), new LiveConnections(), new VideoCalls());
 
         // Mock HubCallerContext for outsider
         var claims = new[]
@@ -744,8 +744,8 @@ public sealed class AuthorizationAndRoomAccessTests : IClassFixture<WebApplicati
                 RoomId = roomId,
                 Status = "playing",
                 SideToMove = "red",
-                InitialBoardJson = "{}",
-                CurrentBoardJson = "{}",
+                InitialBoardJson = GameCoTuong.Engine.Serialization.BoardSerializer.Serialize(GameCoTuong.Engine.Model.BoardInitializer.CreateInitialBoard()),
+                CurrentBoardJson = GameCoTuong.Engine.Serialization.BoardSerializer.Serialize(GameCoTuong.Engine.Model.BoardInitializer.CreateInitialBoard()),
                 StartedAt = DateTimeOffset.UtcNow
             };
             db.Matches.Add(match);
@@ -853,7 +853,7 @@ public sealed class AuthorizationAndRoomAccessTests : IClassFixture<WebApplicati
 
         using var scope = _factory.Services.CreateScope();
         var roomAuthService = scope.ServiceProvider.GetRequiredService<IRoomAuthorizationService>();
-        var hub = new GameHub(roomAuthService);
+        var hub = new GameHub(roomAuthService, scope.ServiceProvider.GetRequiredService<GameCoTuong.Infrastructure.Game.GameService>(), new LiveConnections(), new VideoCalls());
 
         var groupManager = new TestGroupManager();
         var clients = new TestHubCallerClients();
@@ -910,7 +910,7 @@ public sealed class AuthorizationAndRoomAccessTests : IClassFixture<WebApplicati
         var roomAuthService = scope.ServiceProvider.GetRequiredService<IRoomAuthorizationService>();
 
         // 1. Member joins -> success
-        var memberHub = new GameHub(roomAuthService);
+        var memberHub = new GameHub(roomAuthService, scope.ServiceProvider.GetRequiredService<GameCoTuong.Infrastructure.Game.GameService>(), new LiveConnections(), new VideoCalls());
         var memberGroups = new TestGroupManager();
         var memberClients = new TestHubCallerClients();
         var memberPrincipal = new ClaimsPrincipal(new ClaimsIdentity(
@@ -928,7 +928,7 @@ public sealed class AuthorizationAndRoomAccessTests : IClassFixture<WebApplicati
         Assert.Contains(memberClients.GroupProxies[expectedGroup].Invocations, inv => inv.Method == "PlayerJoinedRoom");
 
         // 2. Outsider joins -> HubException FORBIDDEN
-        var outHub = new GameHub(roomAuthService);
+        var outHub = new GameHub(roomAuthService, scope.ServiceProvider.GetRequiredService<GameCoTuong.Infrastructure.Game.GameService>(), new LiveConnections(), new VideoCalls());
         var outGroups = new TestGroupManager();
         var outClients = new TestHubCallerClients();
         var outPrincipal = new ClaimsPrincipal(new ClaimsIdentity(
@@ -981,7 +981,7 @@ public sealed class AuthorizationAndRoomAccessTests : IClassFixture<WebApplicati
         using var scope = _factory.Services.CreateScope();
         var roomAuthService = scope.ServiceProvider.GetRequiredService<IRoomAuthorizationService>();
 
-        var hub = new GameHub(roomAuthService);
+        var hub = new GameHub(roomAuthService, scope.ServiceProvider.GetRequiredService<GameCoTuong.Infrastructure.Game.GameService>(), new LiveConnections(), new VideoCalls());
         var clients = new TestHubCallerClients();
         var memberPrincipal = new ClaimsPrincipal(new ClaimsIdentity(
             new[] { new Claim(ClaimTypes.NameIdentifier, memberUser.Id.ToString()) }, "Bearer"));
@@ -1003,7 +1003,7 @@ public sealed class AuthorizationAndRoomAccessTests : IClassFixture<WebApplicati
         Assert.False(clients.GroupProxies.ContainsKey(groupB));
 
         // Outsider attempts to send message -> FORBIDDEN
-        var outHub = new GameHub(roomAuthService);
+        var outHub = new GameHub(roomAuthService, scope.ServiceProvider.GetRequiredService<GameCoTuong.Infrastructure.Game.GameService>(), new LiveConnections(), new VideoCalls());
         var outPrincipal = new ClaimsPrincipal(new ClaimsIdentity(
             new[] { new Claim(ClaimTypes.NameIdentifier, outsiderUser.Id.ToString()) }, "Bearer"));
         outHub.Context = new TestHubCallerContext(outPrincipal);

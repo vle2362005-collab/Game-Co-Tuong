@@ -5,6 +5,9 @@ using GameCoTuong.Api.Middleware;
 using GameCoTuong.Infrastructure;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
+using Microsoft.EntityFrameworkCore;
+using GameCoTuong.Infrastructure.Persistence;
+using Microsoft.AspNetCore.SignalR;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -29,10 +32,19 @@ builder.Services.AddCors(options => options.AddPolicy("Frontend", policy =>
 }));
 builder.Services.AddProblemDetails();
 builder.Services.AddHealthChecks();
-builder.Services.AddSignalR();
+builder.Services.AddSingleton<LiveConnections>();
+builder.Services.AddSingleton<VideoCalls>();
+builder.Services.AddSignalR(options => options.AddFilter<SessionHubFilter>());
 builder.Services.AddInfrastructure(builder.Configuration);
 
 var app = builder.Build();
+if (app.Configuration["Database:Provider"] == "Sqlite")
+{
+    using var scope = app.Services.CreateScope();
+    GameCoTuong.Infrastructure.Game.GameService.WriteGate.Wait();
+    try { scope.ServiceProvider.GetRequiredService<GameDbContext>().Database.EnsureCreated(); }
+    finally { GameCoTuong.Infrastructure.Game.GameService.WriteGate.Release(); }
+}
 _ = app.Services.GetRequiredService<IOptions<BrowserClientOptions>>().Value;
 app.UseExceptionHandler();
 app.UseCors("Frontend");

@@ -27,3 +27,8 @@ Thumbs.db
 *.p12
 *.pem
 *.key
+
+# Local SQLite demo and browser evidence
+*.db
+*.db-shm
+*.db-wal

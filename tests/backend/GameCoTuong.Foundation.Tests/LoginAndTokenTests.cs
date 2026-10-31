@@ -22,7 +22,7 @@ public sealed class LoginAndTokenTests : IClassFixture<WebApplicationFactory<Pro
 
     public LoginAndTokenTests(WebApplicationFactory<Program> factory)
     {
-        _factory = factory;
+        _factory = TestDatabase.Configure(factory);
     }
 
     [Fact]

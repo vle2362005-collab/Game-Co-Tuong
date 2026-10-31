@@ -26,7 +26,7 @@ public class JwtAuthenticationMiddleware
         }
 
         // 2. Check query string access_token (for SignalR and WebSockets)
-        if (string.IsNullOrWhiteSpace(token) && context.Request.Query.TryGetValue("access_token", out var queryToken))
+        if (string.IsNullOrWhiteSpace(token) && context.Request.Path.StartsWithSegments("/hubs/game") && context.Request.Query.TryGetValue("access_token", out var queryToken))
         {
             token = queryToken.ToString().Trim();
         }
