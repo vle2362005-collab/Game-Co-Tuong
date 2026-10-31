@@ -64,3 +64,7 @@ PR vào `develop`/`main` được [GCT CI](.github/workflows/ci.yml) build và k
 - GCT-15 và GCT-20 đã có ở nhánh `feature/GCT-15-project-foundation`; tại thời điểm tạo GCT-21, các tài liệu đó chưa được tích hợp vào `main`/`develop`. Xem [kiến trúc GCT-20](https://github.com/vle2362005-collab/Game-Co-Tuong/blob/81f65ca67af35adff8c0dbb4d82e7953a3b9b4e0/docs/architecture.md) và [hợp đồng](https://github.com/vle2362005-collab/Game-Co-Tuong/blob/81f65ca67af35adff8c0dbb4d82e7953a3b9b4e0/docs/contracts.md) tại commit đã bàn giao.
 - `main`: bản ổn định; `develop`: nơi nhận thay đổi qua PR; `feature/GCT-<mã>-<nội-dung>`: từng công việc. Sau khi PR GCT-21 được merge, thành viên cập nhật `develop` rồi mới tách nhánh.
 - Trưởng nhóm duyệt và merge. Xem [cách làm việc và mở PR](CONTRIBUTING.md), [quy ước Jira](docs/jira-workflow.md), [rà soát GCT-22](docs/GCT-22-audit.md), [cấu hình bảo vệ nhánh](.github/rulesets/README.md) và [CI GCT-23](docs/ci.md).
+
+## Bản tích hợp Sprint 3
+
+Xem [hướng dẫn chạy, video call và đối chiếu các thẻ](docs/sprint3.md).
