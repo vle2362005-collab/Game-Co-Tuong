@@ -1,4 +1,7 @@
 using GameCoTuong.Api.Configuration;
+using GameCoTuong.Api.Endpoints;
+using GameCoTuong.Api.Hubs;
+using GameCoTuong.Api.Middleware;
 using GameCoTuong.Infrastructure;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
@@ -22,16 +25,18 @@ builder.Services.AddOptions<BrowserClientOptions>()
 builder.Services.AddCors(options => options.AddPolicy("Frontend", policy =>
 {
     var origins = builder.Configuration.GetSection("BrowserClient:AllowedOrigins").Get<string[]>() ?? [];
-    policy.WithOrigins(origins).AllowAnyHeader().AllowAnyMethod();
+    policy.WithOrigins(origins).AllowAnyHeader().AllowAnyMethod().AllowCredentials();
 }));
 builder.Services.AddProblemDetails();
 builder.Services.AddHealthChecks();
+builder.Services.AddSignalR();
 builder.Services.AddInfrastructure(builder.Configuration);
 
 var app = builder.Build();
 _ = app.Services.GetRequiredService<IOptions<BrowserClientOptions>>().Value;
 app.UseExceptionHandler();
 app.UseCors("Frontend");
+app.UseMiddleware<JwtAuthenticationMiddleware>();
 
 // Process liveness only: this does not claim that SQL Server or game services are ready.
 app.MapHealthChecks("/health", new HealthCheckOptions
@@ -42,6 +47,12 @@ app.MapHealthChecks("/health", new HealthCheckOptions
         service = "game-co-tuong-api"
     }, context.RequestAborted)
 });
+
+app.MapAuthEndpoints();
+app.MapUserEndpoints();
+app.MapRoomEndpoints();
+app.MapMatchEndpoints();
+app.MapHub<GameHub>("/hubs/game");
 
 app.Run();
 
