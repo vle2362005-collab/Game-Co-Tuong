@@ -219,6 +219,7 @@ namespace GameCoTuong.Infrastructure.Persistence.Migrations
                         .HasColumnType("datetimeoffset");
 
                     b.Property<long>("Version")
+                        .IsConcurrencyToken()
                         .ValueGeneratedOnAdd()
                         .HasColumnType("bigint")
                         .HasDefaultValue(1L);
@@ -229,7 +230,9 @@ namespace GameCoTuong.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("RoomId");
+                    b.HasIndex("RoomId")
+                        .IsUnique()
+                        .HasFilter("[Status] IN ('playing', 'paused')");
 
                     b.ToTable("Matches", (string)null);
                 });
@@ -461,6 +464,7 @@ namespace GameCoTuong.Infrastructure.Persistence.Migrations
                         .HasDefaultValue("waiting");
 
                     b.Property<long>("Version")
+                        .IsConcurrencyToken()
                         .ValueGeneratedOnAdd()
                         .HasColumnType("bigint")
                         .HasDefaultValue(1L);

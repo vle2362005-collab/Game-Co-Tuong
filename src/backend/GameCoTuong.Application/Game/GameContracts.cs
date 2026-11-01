@@ -4,7 +4,14 @@ public sealed record CreateRoomInput(Guid RequestId, string Name = "Phòng cờ"
 public sealed record CommandInput(Guid RequestId);
 public sealed record ReadyInput(bool Ready);
 public sealed record MoveInput(Guid RequestId, long ExpectedVersion, string PieceId, int ToCol, int ToRow);
+public sealed record SurrenderInput(bool Confirmed);
+public sealed record DrawOfferResponseInput(Guid OfferId);
+public sealed record MatchResultView(string Status, string? Winner, string Outcome, string ReasonCode, string? Reason, DateTimeOffset? EndedAt);
 public sealed record ChatInput(Guid RequestId, string Content);
+public interface IDrawOfferExpirationNotifier
+{
+    Task NotifyExpired(Guid matchId, Guid roomId, CancellationToken cancellationToken);
+}
 public sealed record SignalInput(Guid CallId, Guid RecipientId, string Type, string Data);
 public sealed record MemberView(Guid UserId, string DisplayName, string Side, bool Ready, bool Connected);
 public sealed record RoomView(Guid Id, string Code, string Name, Guid HostUserId, string Status, long Version,

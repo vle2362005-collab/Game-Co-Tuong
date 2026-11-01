@@ -21,7 +21,7 @@ async function send() {
   catch (e) { error.value = e instanceof Error ? e.message : String(e) }
   finally { busy.value = false }
 }
-onMounted(() => { off.push(auth.signalR.on('RoomMessageReceived', m => receive(m as Message))); off.push(auth.signalR.on('Reconnected', () => { void load() })); void load() })
+onMounted(() => { off.push(auth.signalR.on('RoomMessageReceived', m => receive(m as Message))); off.push(auth.signalR.on('TransportReconnected', () => { void load() })); void load() })
 onUnmounted(() => off.forEach(fn => fn()))
 </script>
 <template>

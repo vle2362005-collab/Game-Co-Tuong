@@ -6,6 +6,12 @@ public sealed class VideoCalls
 {
     private sealed record Call(Guid Id, Guid Caller, Guid Callee, DateTimeOffset Created, bool Answered);
     private readonly Dictionary<Guid, Call> calls = new();
+    private readonly ILogger<VideoCalls> logger;
+
+    public VideoCalls() : this(Microsoft.Extensions.Logging.Abstractions.NullLogger<VideoCalls>.Instance) { }
+
+    public VideoCalls(ILogger<VideoCalls> logger) => this.logger = logger;
+
     public void Validate(Guid roomId, Guid senderId, SignalInput signal)
     {
         lock (calls)
@@ -13,7 +19,13 @@ public sealed class VideoCalls
             if (signal.CallId == Guid.Empty || signal.RecipientId == senderId || string.IsNullOrWhiteSpace(signal.Data) || signal.Data.Length > 65536)
                 throw new GameFault("INVALID_SIGNAL", "Tín hiệu video không hợp lệ.", 400);
             calls.TryGetValue(roomId, out var call);
-            if (call is not null && !call.Answered && DateTimeOffset.UtcNow - call.Created > TimeSpan.FromSeconds(90)) { calls.Remove(roomId); call = null; }
+            if (call is not null && !call.Answered && DateTimeOffset.UtcNow - call.Created > TimeSpan.FromSeconds(90))
+            {
+                calls.Remove(roomId);
+                logger.LogWarning("Video call offer timed out. {TraceId} {RoomId} {CallId} {ErrorCode} {StatusCode}",
+                    System.Diagnostics.Activity.Current?.TraceId.ToString(), roomId, call.Id, "CALL_TIMEOUT", StatusCodes.Status408RequestTimeout);
+                call = null;
+            }
             if (signal.Type == "offer")
             {
                 if (call is not null) throw new GameFault("CALL_BUSY", "Phòng đang có một cuộc gọi.");

@@ -32,7 +32,7 @@ function start() { return run(() => gameApi.start(id, startRequest)) }
 function leave() { return run(() => gameApi.leave(id), true) }
 onMounted(async () => {
   off.push(auth.signalR.on('RoomStateChanged', r => { void update(r as Room) }))
-  off.push(auth.signalR.on('Reconnected', () => { void run(async () => { await auth.signalR.invoke('JoinRoom', id); return gameApi.room(id) }) }))
+  off.push(auth.signalR.on('TransportReconnected', () => { void run(async () => { await auth.signalR.invoke('JoinRoom', id); return gameApi.room(id) }) }))
   try {
     if (!await auth.signalR.connect()) throw new Error('Chưa kết nối máy chủ trực tuyến.')
     await auth.signalR.invoke('JoinRoom', id)

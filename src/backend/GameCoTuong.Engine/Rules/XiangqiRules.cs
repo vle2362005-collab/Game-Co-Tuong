@@ -64,8 +64,21 @@ public static class XiangqiRules
 
     public static IReadOnlyList<LegalMove> Generate(Board board, Side side)
     {
+        return Generate(board, side, board.Where(p => p.Side == side));
+    }
+
+    public static IReadOnlyList<LegalMove> Generate(Board board, Side side, string pieceId)
+    {
+        var piece = board.GetPieceById(pieceId);
+        return piece is null || piece.Side != side
+            ? Array.Empty<LegalMove>()
+            : Generate(board, side, [piece]);
+    }
+
+    private static IReadOnlyList<LegalMove> Generate(Board board, Side side, IEnumerable<Piece> pieces)
+    {
         var moves = new List<LegalMove>();
-        foreach (var piece in board.Where(p => p.Side == side))
+        foreach (var piece in pieces)
             for (int row = 0; row < 10; row++)
                 for (int col = 0; col < 9; col++)
                 {

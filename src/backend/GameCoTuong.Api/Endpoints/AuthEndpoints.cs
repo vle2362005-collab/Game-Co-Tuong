@@ -195,8 +195,9 @@ public static class AuthEndpoints
         if (context.Request.Headers.TryGetValue("X-Request-ID", out var headerVal) &&
             Guid.TryParse(headerVal.ToString(), out var guid))
         {
+            context.Items[GameCoTuong.Api.Middleware.RequestLoggingMiddleware.RequestIdItemKey] = guid;
             return guid;
         }
-        return Guid.NewGuid();
+        return GameCoTuong.Api.Middleware.RequestLoggingMiddleware.GetRequestId(context);
     }
 }

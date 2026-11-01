@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import type { User, MatchHistoryItem } from '../types/auth'
+import type { User, MatchHistoryItem, MatchHistoryPage } from '../types/auth'
 import { apiClient, ApiClientError } from '../api/client'
 
 defineProps<{
@@ -10,63 +10,42 @@ defineProps<{
 
 const router = useRouter()
 
-const filter = ref<'all' | 'win' | 'loss' | 'draw'>('all')
+const filter = ref<'all' | 'win' | 'loss' | 'draw' | 'cancelled' | 'in-progress'>('all')
+const modeFilter = ref<'all' | 'pvp' | 'pve'>('all')
 const isLoading = ref(false)
 const errorMessage = ref<string | null>(null)
 const historyList = ref<MatchHistoryItem[]>([])
-
-const mockFallbackData: MatchHistoryItem[] = [
-  {
-    id: 'hist-001',
-    roomId: 'room-alpha',
-    opponentName: 'Cao Thủ Thành Nam',
-    side: 'red',
-    result: 'win',
-    resultReason: 'Chiếu bí (Checkmate)',
-    playedAt: '2026-10-27 15:30',
-    movesCount: 42
-  },
-  {
-    id: 'hist-002',
-    roomId: 'room-beta',
-    opponentName: 'Kỳ Bá Phương Bắc',
-    side: 'black',
-    result: 'loss',
-    resultReason: 'Đầu hàng (Resignation)',
-    playedAt: '2026-10-26 19:15',
-    movesCount: 35
-  },
-  {
-    id: 'hist-003',
-    roomId: 'room-gamma',
-    opponentName: 'Lão Tướng Sông Hồng',
-    side: 'red',
-    result: 'draw',
-    resultReason: 'Hòa cờ nghị hòa (Agreement)',
-    playedAt: '2026-10-25 10:00',
-    movesCount: 68
-  }
-]
+const page = ref(1)
+const pageSize = 10
+const totalCount = ref(0)
+const totalPages = ref(0)
 
 async function loadHistory() {
   isLoading.value = true
   errorMessage.value = null
 
   try {
-    // Attempt fetching match history from backend API
-    const data = await apiClient.get<MatchHistoryItem[]>('/api/v1/matches/history', {
+    const query = new URLSearchParams({ page: String(page.value), pageSize: String(pageSize) })
+    if (filter.value !== 'all') query.set('outcome', filter.value)
+    if (modeFilter.value !== 'all') query.set('mode', modeFilter.value)
+    const data = await apiClient.get<MatchHistoryPage>(`/api/v1/matches/history?${query}`, {
       timeoutMs: 5000,
       retries: 1
     })
-    historyList.value = Array.isArray(data) && data.length > 0 ? data : mockFallbackData
+    historyList.value = data.items
+    totalCount.value = data.totalCount
+    totalPages.value = data.totalPages
   } catch (err: unknown) {
     if (err instanceof ApiClientError) {
-      // In offline or staging environment without history endpoint, fallback gracefully
-      historyList.value = mockFallbackData
-      errorMessage.value = `Máy chủ chưa hỗ trợ tải lịch sử trực tiếp (${err.message}). Hiển thị dữ liệu mẫu.`
+      historyList.value = []
+      totalCount.value = 0
+      totalPages.value = 0
+      errorMessage.value = `Không thể tải lịch sử từ máy chủ (${err.message}).`
     } else {
-      historyList.value = mockFallbackData
-      errorMessage.value = 'Không thể tải lịch sử đấu. Đang hiển thị dữ liệu lưu tạm.'
+      historyList.value = []
+      totalCount.value = 0
+      totalPages.value = 0
+      errorMessage.value = 'Không thể tải lịch sử đấu.'
     }
   } finally {
     isLoading.value = false
@@ -77,21 +56,46 @@ onMounted(() => {
   loadHistory()
 })
 
-function filteredList() {
-  if (filter.value === 'all') return historyList.value
-  return historyList.value.filter(item => item.result === filter.value)
+watch([filter, modeFilter], () => {
+  page.value = 1
+  loadHistory()
+})
+
+function changePage(nextPage: number) {
+  if (nextPage < 1 || nextPage > totalPages.value || nextPage === page.value) return
+  page.value = nextPage
+  loadHistory()
 }
 
 function resultBadgeClass(result: string) {
   if (result === 'win') return 'win'
   if (result === 'loss') return 'loss'
+  if (result === 'cancelled') return 'cancelled'
   return 'draw'
 }
 
 function resultText(result: string) {
   if (result === 'win') return 'Thắng'
   if (result === 'loss') return 'Thua'
+  if (result === 'cancelled') return 'Đã hủy'
+  if (result === 'in-progress') return 'Đang đấu'
   return 'Hòa'
+}
+
+function reasonText(item: MatchHistoryItem) {
+  const labels: Record<string, string> = {
+    surrender: 'Đầu hàng',
+    'draw-agreement': 'Thỏa thuận hòa',
+    checkmate: 'Chiếu bí',
+    stalemate: 'Hết nước đi',
+    timeout: 'Hết thời gian',
+    cancellation: 'Đã hủy'
+  }
+  return labels[item.reasonCode || ''] || item.resultReason || 'Chưa có kết quả'
+}
+
+function playedAt(item: MatchHistoryItem) {
+  return new Date(item.startedAt).toLocaleString('vi-VN')
 }
 </script>
 
@@ -129,7 +133,7 @@ function resultText(result: string) {
         :class="{ active: filter === 'all' }"
         @click="filter = 'all'"
       >
-        Tất cả ({{ historyList.length }})
+        Tất cả<span v-if="filter === 'all'"> ({{ totalCount }})</span>
       </button>
       <button
         type="button"
@@ -155,6 +159,27 @@ function resultText(result: string) {
       >
         Hòa
       </button>
+      <button
+        type="button"
+        class="filter-tab"
+        :class="{ active: filter === 'cancelled' }"
+        @click="filter = 'cancelled'"
+      >
+        Đã hủy
+      </button>
+      <button
+        type="button"
+        class="filter-tab"
+        :class="{ active: filter === 'in-progress' }"
+        @click="filter = 'in-progress'"
+      >
+        Đang đấu
+      </button>
+      <select v-model="modeFilter" class="mode-filter" aria-label="Lọc loại trận">
+        <option value="all">Mọi loại trận</option>
+        <option value="pvp">Đấu người</option>
+        <option value="pve">Đấu máy</option>
+      </select>
     </div>
 
     <!-- Loading State -->
@@ -164,30 +189,40 @@ function resultText(result: string) {
     </div>
 
     <!-- List of Matches -->
-    <div v-else-if="filteredList().length > 0" class="history-list">
-      <div v-for="item in filteredList()" :key="item.id" class="history-item">
+    <div v-else-if="historyList.length > 0" class="history-list">
+      <div v-for="item in historyList" :key="item.id" class="history-item">
         <div class="item-status">
-          <span class="result-badge" :class="resultBadgeClass(item.result)">
-            {{ resultText(item.result) }}
+          <span class="result-badge" :class="resultBadgeClass(item.outcome)">
+            {{ resultText(item.outcome) }}
           </span>
-          <span class="side-tag" :class="item.side">
-            {{ item.side === 'red' ? 'Phe Đỏ' : 'Phe Đen' }}
+          <span class="side-tag" :class="item.playerSide">
+            {{ item.playerSide === 'red' ? 'Phe Đỏ' : 'Phe Đen' }}
           </span>
         </div>
 
         <div class="item-details">
-          <h4>vs {{ item.opponentName }}</h4>
+          <h4>vs {{ item.mode === 'ai' || item.mode === 'pve' ? 'Máy' : item.opponent?.displayName || 'Kỳ thủ' }}</h4>
           <p class="item-meta">
-            <span>{{ item.resultReason }}</span> ·
-            <span>{{ item.movesCount }} nước</span> ·
-            <span>{{ item.playedAt }}</span>
+            <span>{{ item.mode === 'ai' || item.mode === 'pve' ? 'Đấu với máy' : 'Đấu với người' }}</span> ·
+            <span>{{ reasonText(item) }}</span> ·
+            <span>{{ item.moveNumber }} nước</span> ·
+            <span>{{ playedAt(item) }}</span>
           </p>
+          <button type="button" class="btn-review" @click="router.push(`/game/${item.id}`)">Xem lại ván</button>
         </div>
       </div>
     </div>
 
+    <div v-if="!isLoading && totalCount > 0" class="pagination">
+      <span>{{ totalCount }} ván · Trang {{ page }}/{{ totalPages }}</span>
+      <div>
+        <button type="button" :disabled="page <= 1" @click="changePage(page - 1)">Trước</button>
+        <button type="button" :disabled="page >= totalPages" @click="changePage(page + 1)">Sau</button>
+      </div>
+    </div>
+
     <!-- Empty State -->
-    <div v-else class="empty-state">
+    <div v-else-if="!errorMessage" class="empty-state">
       <p>Chưa có ván đấu nào phù hợp với bộ lọc.</p>
     </div>
   </div>
@@ -273,8 +308,46 @@ h2 {
 
 .filter-bar {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
   margin-bottom: 20px;
+}
+
+.mode-filter {
+  border: 1px solid #d6dcd0;
+  border-radius: 20px;
+  padding: 6px 12px;
+  color: #53625b;
+  background: #fffef9;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 20px;
+  color: #65746d;
+  font-size: 0.82rem;
+}
+
+.pagination div {
+  display: flex;
+  gap: 8px;
+}
+
+.pagination button {
+  border: 1px solid #d6dcd0;
+  border-radius: 6px;
+  padding: 6px 10px;
+  background: #fffef9;
+  color: #53625b;
+  cursor: pointer;
+}
+
+.pagination button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .filter-tab {
@@ -337,6 +410,8 @@ h2 {
   text-align: center;
   width: 100%;
 }
+.result-badge.cancelled { background: #e8e8e8; color: #555; }
+.btn-review { margin-top: 8px; padding: 6px 10px; cursor: pointer; }
 
 .result-badge.win {
   background: #eaf6ea;
