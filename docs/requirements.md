@@ -16,7 +16,7 @@ Ngày: 26/10/2026 · [Jira GCT-19](https://vle2362005.atlassian.net/browse/GCT-1
 | FR-06 | Mất kết nối và nối lại | Bắt buộc V1 | GCT-48,75–76,109–110: tạm dừng đồng hồ trận; tổng ngân sách nối lại mỗi người 60 giây/trận; nối nhiều lần không reset; đúng tài khoản trở lại đúng ghế |
 | FR-07 | Dọn phòng và phục hồi backend | Bắt buộc V1 | GCT-77–78: chờ không hoạt động 15 phút, phòng kết thúc tối đa 5 phút; bảo vệ thời gian phục hồi; restart giữ nước đã xác nhận và chờ xác thực lại, không tự xử thắng |
 | FR-08 | Chat văn bản trong phòng | Bắt buộc V1 | GCT-63–64,111: đúng thành viên, đúng phòng; 1–500 ký tự sau trim; lưu và tải bù bằng sequence; hiển thị như text |
-| FR-09 | Kết quả, đầu hàng và thỏa thuận hòa | Bắt buộc V1 | GCT-73,86–88: kết quả đúng một lần; hòa cần đối thủ chấp thuận offerId trong 30 giây; nước mới/từ chối/hết hạn hủy đề nghị |
+| FR-09 | Kết quả, đầu hàng và thỏa thuận hòa | Bắt buộc V1 | GCT-16,73,86–88: đầu hàng cần xác nhận; chỉ chấp nhận đúng offerId còn hiệu lực trong 30 giây; nước hợp lệ mới/từ chối/hết hạn hủy đề nghị; kết quả ghi một lần |
 | FR-10 | Xem lịch sử của chính người chơi | Bắt buộc V1 | GCT-86,91,108,116: còn bàn cuối, nước, đối thủ, kết quả/lý do sau đóng phòng; không cho đọc trận của người khác |
 | FR-11 | Kiểm thử tích hợp, bảo mật và sự cố | Bắt buộc V1 | GCT-93–96,104–107: có dữ liệu đầu vào, kết quả thực và bằng chứng; không dùng trạng thái Done thay cho kiểm thử |
 | FR-12 | Chơi với máy: Minimax + Alpha-Beta | Mở rộng V2 | GCT-68–72,90,113: dùng chung luật và sinh nước; giới hạn suy nghĩ, đi đúng luật, có mức khó và lưu kết quả; hợp đồng PvE bổ sung ở task tương ứng |
@@ -38,11 +38,12 @@ AI/video là phần mở rộng đã có trong kế hoạch, không phải chứ
 | BR-05 | Hạn nối lại dùng giờ server; `now >= deadline` là hết hạn. Một bên hết ngân sách khi đối thủ online hợp lệ thì thua. Nếu cả hai offline, chờ tới hạn còn lại: cả hai hết thì hủy; bên còn ngân sách quay lại đúng hạn thắng. Người quay lại trễ không phục hồi quyền chơi. |
 | BR-06 | Hết đồng hồ trước khi xử lý ngắt kết nối vẫn thua do hết giờ. Khi đã paused, đồng hồ không chạy và không chấp nhận Move. Xử lý cùng trận trong transaction để chỉ chốt một kết quả. |
 | BR-07 | Một user có nhiều tab/kết nối: chỉ offline khi không còn kết nối đã xác thực và gắn đúng trận; đóng kết nối cũ không làm mất presence của kết nối mới. |
-| BR-08 | Restart một backend: nạp snapshot, moves và ngân sách còn lại vào paused. Người đã offline giữ deadline cũ; người trước đó online nhận cửa sổ từ thời điểm khôi phục bằng ngân sách còn lại. Cả hai xác thực lại đúng hạn thì tiếp tục; một bên không phục hồi thì hủy `serverRestart`, không trao thắng tự động. |
+| BR-08 | Restart một backend: nạp snapshot, moves và ngân sách còn lại vào paused. Người đã offline giữ deadline cũ; người trước đó online nhận cửa sổ từ thời điểm khôi phục bằng ngân sách còn lại. Cả hai xác thực lại đúng hạn qua `POST /api/v1/matches/{matchId}/reconnect` hoặc kết nối lại phòng thì tiếp tục; một bên không phục hồi thì hủy `serverRestart`, không trao thắng tự động. |
 | BR-09 | Đồng hồ sau crash dùng checkpoint cuối đã commit, không tự đoán thời điểm crash hay trừ thời gian backend không hoạt động. Đây là giới hạn độ chính xác của bản demo; phải lưu clock/checkpoint trong cùng transaction nước đi. |
 | BR-10 | Đề nghị hòa chỉ khi playing PvP; tối đa một đề nghị hiệu lực, 30 giây, đồng hồ vẫn chạy. Đối thủ mới được chấp nhận/từ chối; Move, pause, kết thúc hoặc hết hạn làm mất hiệu lực. |
 | BR-11 | Phòng chờ không hoạt động 15 phút được đóng, trừ khi còn cửa sổ phục hồi; phòng finished đóng sau tối đa 5 phút hoặc khi chủ đóng/rời. Dọn phòng không hard-delete trận, nước, receipt hay kết quả. |
 | BR-12 | Log có requestId, userId, roomId/matchId và lý do; không chứa mật khẩu, token hoặc connection string. Các thao tác vượt quyền không sửa dữ liệu. |
+| BR-13 | Khi mất kết nối trong trận, SignalR phát `PlayerDisconnected` kèm playerId, side, deadlineAt và countdownMs do server tính; `MatchChanged` mang recoveryState `waiting_reconnect`. Khi nối lại, caller nhận `Reconnected` với playerSide, bàn, lượt, clock, deadline và kết quả hiện tại; matchId không đổi. |
 
 BR-05, BR-08 và BR-09 làm rõ cách xử lý biên cho GCT-76/78, cần trưởng nhóm kiểm tra khi duyệt thiết kế. Không thay quy tắc mất mạng bằng “mỗi lần được thêm 60 giây”, không tự hủy ngay mọi trận lúc restart.
 
@@ -59,15 +60,18 @@ Các ca sau là **kế hoạch nghiệm thu**, chưa phải kết quả chạy b
 | AC-05 | Đi sai quân/lượt, ra ngoài bàn, tự chiếu, lộ Tướng | Không tăng ply, không sửa bàn; có mã lỗi |
 | AC-06 | Gửi lại nước đã chấp nhận bằng HTTP rồi Hub | Trả receipt cũ; không thêm nước/event mới |
 | AC-07 | Version cũ hoặc bỏ mất sự kiện cuối | Client khóa thao tác, lấy snapshot/cursor rồi đối chiếu |
-| AC-08 | Offline 20 giây, về, offline tiếp | Còn 40 giây cho lần sau; clock playing chỉ chạy khi cả hai đã phục hồi |
+| AC-08 | Offline 20 giây, về, offline tiếp | Match chuyển `paused`, server phát `PlayerDisconnected` với deadline/countdown; nước đi bị khóa; reconnect tiếp tục cùng match và giữ bàn/lượt/clock checkpoint |
 | AC-09 | Reconnect tại `deadline-1ms` và tại `deadline` | Lần đầu phục hồi; lần sau đã hết hạn, không chiếm lại ghế trận |
-| AC-10 | Hai bên offline, lần lượt hết ngân sách | Không tự chọn thắng; hủy cả hai khi hết, giữ lịch sử |
+| AC-10 | Một bên offline hết ngân sách trong khi đối thủ online | Server kết thúc match, xử thua do `disconnect-timeout`, phát trạng thái/kết quả đã chốt |
+| AC-10a | Hai bên offline, lần lượt hết ngân sách | Không tự chọn thắng; hủy cả hai khi hết, giữ lịch sử |
 | AC-11 | Restart sau nước đã nhận phản hồi thành công | Nước vẫn có; paused với ngân sách cũ; hai người xác thực lại mới tiếp tục |
 | AC-12 | Chỉ một người trở lại sau restart | Hết cửa sổ thì cancelled/serverRestart, winner=null |
 | AC-13 | Nhận hòa từ chính người gửi, offer cũ, hoặc sau 30 giây | Từ chối; không tạo kết quả hòa |
 | AC-14 | Đối thủ nhận hòa đúng hạn đồng thời với Move/Resign | Transaction thắng quyết định một trạng thái; tác vụ còn lại không ghi kết quả thứ hai |
 | AC-15 | Đóng phòng và chạy cleanup lại nhiều lần | Không mất match/moves; người tham gia vẫn đọc được lịch sử |
 | AC-16 | DB lỗi trước commit hoặc crash sau commit trước broadcast | Không báo thành công giả; retry/snapshot khôi phục được dữ liệu đã commit |
+| AC-17 | Nhiều lệnh Join/Ready/Start/Leave/Close đồng thời trên cùng phòng | Tối đa hai ghế hoạt động, tối đa một match `playing`/`paused`; lệnh cạnh tranh không ghi đè trạng thái đã commit |
+| AC-18 | Reconnect cùng lúc với cleanup hết hạn | Một kết quả có thứ tự nhất quán; trận đã hết hạn không thể được khôi phục và lịch sử đã commit được giữ nguyên |
 
 ## 4. Cách dùng và điều kiện đóng GCT-19
 

@@ -10,6 +10,8 @@ public sealed class LiveConnections
     public void Add(string connection, Guid user, Guid? room = null) => connections[connection] = (user, room);
     public (Guid User, Guid? Room)? Remove(string connection) => connections.TryRemove(connection, out var info) ? info : null;
     public bool Has(Guid user, Guid room) => connections.Values.Any(v => v.User == user && v.Room == room);
+    public bool IsInRoom(string connection, Guid user, Guid room) =>
+        connections.TryGetValue(connection, out var info) && info.User == user && info.Room == room;
     public async Task EvictInactive(RoomView room, IHubContext<GameHub> hub)
     {
         foreach (var pair in connections.Where(p => p.Value.Room == room.Id && !room.Members.Any(m => m.UserId == p.Value.User)))

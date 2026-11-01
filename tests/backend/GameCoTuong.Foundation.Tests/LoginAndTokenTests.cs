@@ -140,7 +140,9 @@ public sealed class LoginAndTokenTests : IClassFixture<WebApplicationFactory<Pro
         var session = tokenService.GenerateToken(user);
 
         var parts = session.AccessToken.Split('.');
-        var tamperedSig = parts[2].EndsWith('X') ? parts[2][..^1] + "Y" : parts[2][..^1] + "X";
+        var tamperedSig = parts[2][1] == 'X'
+            ? parts[2][..1] + "Y" + parts[2][2..]
+            : parts[2][..1] + "X" + parts[2][2..];
         var tamperedToken = $"{parts[0]}.{parts[1]}.{tamperedSig}";
 
         var principal = tokenService.ValidateToken(tamperedToken);

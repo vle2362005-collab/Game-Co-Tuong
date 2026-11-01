@@ -77,6 +77,28 @@ public sealed class CompleteRulesTests
         Assert.All(legal,m=>Assert.Equal(PieceType.General,board.GetPieceById(m.PieceId)!.Type));
         Assert.All(legal,m=>Assert.False(XiangqiRules.IsInCheck(board.ApplyMove(m.PieceId,m.To,out _),side)));
     }
+    [Fact]
+    public void Selected_piece_hints_exclude_moves_that_expose_its_general()
+    {
+        var board = new Board(new[]
+        {
+            P("red-general-1", PieceType.General, Side.Red, 4, 9),
+            P("black-general-1", PieceType.General, Side.Black, 3, 0),
+            P("red-soldier-5", PieceType.Soldier, Side.Red, 4, 5),
+            P("black-chariot-1", PieceType.Chariot, Side.Black, 4, 3)
+        });
+
+        var hints = XiangqiRules.Generate(board, Side.Red, "red-soldier-5");
+
+        Assert.NotEmpty(hints);
+        Assert.All(hints, move =>
+        {
+            Assert.Equal("red-soldier-5", move.PieceId);
+            Assert.False(XiangqiRules.IsInCheck(board.ApplyMove(move.PieceId, move.To, out _), Side.Red));
+        });
+        Assert.DoesNotContain(hints, move => move.To == new Position(3, 5));
+        Assert.Empty(XiangqiRules.Generate(board, Side.Red, "black-chariot-1"));
+    }
     [Theory] [InlineData(false,false)] [InlineData(false,true)] [InlineData(true,false)] [InlineData(true,true)]
     public void Checkmate_and_stalemate_lose_for_either_colour(bool check,bool mirrored)
     {

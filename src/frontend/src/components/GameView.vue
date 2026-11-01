@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAuth } from '../composables/useAuth'
 import { createMatchSync } from '../composables/useMatchSync'
 import { gameApi, type Match, type Room } from '../api/game'
+import { ApiClientError } from '../api/client'
 import XiangqiBoard from './XiangqiBoard.vue'
 import RoomChat from './RoomChat.vue'
 import VideoCall from './VideoCall.vue'
@@ -17,26 +18,46 @@ const sync = createMatchSync(id, () => gameApi.match(id), onSnapshot, e => { err
 const match = sync.snapshot
 const side = computed(() => match.value?.players.find(p => p.userId === auth.user.value?.id)?.side || 'red')
 const opponent = computed(() => room.value?.members.find(p => p.userId !== auth.user.value?.id))
+const resultLabel = computed(() => {
+  const result = match.value?.result
+  if (!result) return 'Kết quả chưa được đồng bộ.'
+  const outcome = ({
+    'red-win': 'Đỏ thắng',
+    'black-win': 'Đen thắng',
+    draw: 'Hòa',
+    cancelled: 'Trận đã hủy'
+  } as Record<string, string>)[result.outcome] || 'Kết quả chưa được xác định'
+  const reason = ({
+    surrender: 'đầu hàng',
+    'draw-agreement': 'thỏa thuận hòa',
+    checkmate: 'chiếu bí',
+    stalemate: 'hết nước đi',
+    timeout: 'hết thời gian'
+  } as Record<string, string>)[result.reasonCode] || result.reasonCode
+  return `${outcome} · ${reason}`
+})
 const canMove = computed(() => !busy.value && !sync.needsRefresh.value && auth.signalR.isConnected.value && match.value?.status === 'playing' && match.value.sideToMove === side.value && room.value?.members.every(m => m.connected))
 const destinations = computed(() => canMove.value ? (match.value?.legalMoves || []).filter(m => m.pieceId === selected.value).map(m => m.to) : [])
 const checkedGeneralId = computed(() => match.value?.check ? match.value.pieces.find(p => p.type.toLowerCase() === 'general' && p.side.toLowerCase() === match.value?.sideToMove)?.id : null)
 function onSnapshot(next: Match) {
   selected.value = null
   if (next.lastMove?.requestId === pendingMove.value?.requestId) pendingMove.value = null
-  if (next.status === 'finished') auth.activeMatch.value = null
+  if (next.result) auth.activeMatch.value = null
   else auth.enterMatch({ id, roomId: next.roomId, side: (next.players.find(p => p.userId === auth.user.value?.id)?.side || 'red') as 'red' | 'black', opponentName: opponent.value?.displayName || 'Đối thủ' })
 }
 async function load() {
   const ok = await sync.refresh()
-  if (ok && active && match.value) room.value = await gameApi.room(match.value.roomId)
+  if (ok && active && match.value) {
+    if (!match.value.result) room.value = await gameApi.room(match.value.roomId)
+  }
   return ok
 }
 async function retrySync() {
   error.value = ''
   try {
-    if (!await load() || !active) return
+    if (!await load() || !active || match.value?.result) return
     if (!await auth.signalR.connect()) throw new Error('Chưa kết nối máy chủ trực tuyến.')
-    if (!active || !match.value) return
+    if (!active || !match.value || match.value.result) return
     await auth.signalR.invoke('JoinRoom', match.value.roomId)
     if (!active) { void auth.signalR.invoke('LeaveRoom', match.value.roomId).catch(() => {}); return }
     await load()
@@ -46,8 +67,17 @@ function checkSnapshot() { if (active && match.value && !busy.value && auth.sign
 async function cell(col: number, row: number) {
   if (!canMove.value || !match.value) return
   const piece = match.value.pieces.find(p => p.position.col === col && p.position.row === row)
-  if (piece?.side.toLowerCase() === side.value) { selected.value = selected.value === piece.id ? null : piece.id; return }
+  if (piece?.side.toLowerCase() === side.value) {
+    selected.value = selected.value === piece.id ? null : piece.id
+    error.value = ''
+    return
+  }
   if (!selected.value) return
+  if (!match.value.legalMoves?.some(move => move.pieceId === selected.value && move.to.col === col && move.to.row === row)) {
+    error.value = 'Nước đi không hợp lệ.'
+    return
+  }
+  error.value = ''
   pendingMove.value = { pieceId: selected.value, col, row, version: match.value.version, requestId: crypto.randomUUID() }
   await sendMove()
 }
@@ -57,8 +87,10 @@ async function sendMove() {
   const input = pendingMove.value
   try { sync.accept(await gameApi.move(id, input.pieceId, input.col, input.row, input.version, input.requestId), true); pendingMove.value = null }
   catch (e) {
-    if (pendingMove.value) {
-      error.value = e instanceof Error ? e.message : String(e)
+    error.value = e instanceof Error ? e.message : String(e)
+    const rejected = e instanceof ApiClientError && e.status !== undefined && e.status >= 400 && e.status < 500
+    if (rejected) pendingMove.value = null
+    else {
       await load().catch(() => {})
       if (!pendingMove.value) error.value = ''
     }
@@ -70,33 +102,34 @@ async function end(draw = false) {
   busy.value = true; error.value = ''
   try { sync.accept(await gameApi.end(id, draw), true); await load() } catch (e) { error.value = String(e) } finally { busy.value = false }
 }
-async function leave() {
+async function leave(destination = '/lobby') {
   if (!match.value) return
-  try { await gameApi.leave(match.value.roomId); auth.leaveMatch(); await router.push('/lobby') } catch (e) { error.value = String(e) }
+  try { await gameApi.leave(match.value.roomId); auth.leaveMatch(); await router.push(destination) } catch (e) { error.value = String(e) }
 }
 onMounted(async () => {
   off.push(auth.signalR.on('MatchChanged', m => { sync.accept(m as Match) }))
   off.push(auth.signalR.on('RoomStateChanged', r => { const next = r as Room; if (active && next.id === match.value?.roomId && (!room.value || next.version > room.value.version)) room.value = next }))
-  off.push(auth.signalR.on('Reconnected', () => { if (active && match.value) void (async () => { await auth.signalR.invoke('JoinRoom', match.value!.roomId); if (active) await load() })().catch(e => { if (active) error.value = String(e) }) }))
+  off.push(auth.signalR.on('Reconnected', m => { if (active) sync.accept(m as Match) }))
+  off.push(auth.signalR.on('TransportReconnected', () => { if (active && match.value && !match.value.result) void (async () => { await auth.signalR.invoke('JoinRoom', match.value!.roomId); if (active) await load() })().catch(e => { if (active) error.value = String(e) }) }))
   // Periodic/focus reads also recover a final event that was lost with no later event to expose the gap.
   poll = setInterval(checkSnapshot, 15000)
   window.addEventListener('focus', checkSnapshot)
   await retrySync()
 })
-onUnmounted(() => { active = false; if (poll) clearInterval(poll); window.removeEventListener('focus', checkSnapshot); sync.dispose(); off.forEach(fn => fn()); if (match.value) void auth.signalR.invoke('LeaveRoom', match.value.roomId).catch(() => {}) })
+onUnmounted(() => { active = false; if (poll) clearInterval(poll); window.removeEventListener('focus', checkSnapshot); sync.dispose(); off.forEach(fn => fn()); if (room.value && match.value) void auth.signalR.invoke('LeaveRoom', match.value.roomId).catch(() => {}) })
 </script>
 <template>
   <section class="game" :data-match-id="id" :data-version="match?.version">
     <p v-if="error" role="alert" class="error">{{ error }} <button v-if="pendingMove" :disabled="busy" @click="sendMove">Gửi lại cùng mã nước</button> <button :disabled="sync.refreshing.value" @click="retrySync">Đồng bộ lại</button></p>
     <p v-if="sync.refreshing.value && (!match || sync.needsRefresh.value)" role="status">Đang đồng bộ bàn cờ…</p>
     <template v-if="match">
-      <div class="heading"><h1>Ván cờ · {{ room?.code }}</h1><span>Bạn cầm {{ side==='red' ? 'Đỏ' : 'Đen' }}</span></div>
-      <p v-if="match.status==='finished'" role="status"><strong>Kết thúc: {{ match.winner ? (match.winner===side ? 'Bạn thắng' : 'Bạn thua') : 'Hòa' }} · {{ match.resultReason }}</strong></p>
+      <div class="heading"><h1>Ván cờ · {{ room?.code || 'Lịch sử' }}</h1><span>Bạn cầm {{ side==='red' ? 'Đỏ' : 'Đen' }}</span></div>
+      <p v-if="match.result" role="status"><strong>Kết thúc: {{ resultLabel }}</strong></p>
       <p v-else>Lượt {{ match.sideToMove==='red' ? 'Đỏ' : 'Đen' }} · Nước {{ match.moveNumber }} <strong v-if="match.check">· Chiếu Tướng!</strong> <span v-if="!auth.signalR.isConnected.value">· Đang nối lại…</span></p>
       <div class="game-layout"><div><XiangqiBoard :pieces="match.pieces" :flipped="side==='black'" :selected="selected" :disabled="!canMove" :destinations="destinations" :last-move="match.lastMove" :checked-general-id="checkedGeneralId" @cell="cell"/>
         <div class="controls" v-if="match.status==='playing'"><button :disabled="busy" @click="end()">Đầu hàng</button><button :disabled="busy" @click="end(true)">{{ match.drawOfferedBy && match.drawOfferedBy!==side ? 'Đồng ý hòa' : 'Đề nghị hòa' }}</button></div>
-        <button v-else @click="leave">Rời phòng, về sảnh</button>
-      </div><aside><RoomChat :room-id="match.roomId"/><VideoCall :room-id="match.roomId" :opponent-id="opponent?.userId || null"/></aside></div>
+        <div v-else class="controls"><button @click="leave()">Rời phòng, về sảnh</button><button @click="leave('/history')">Xem lịch sử</button></div>
+      </div><aside v-if="room && !match.result"><RoomChat :room-id="match.roomId"/><VideoCall :room-id="match.roomId" :opponent-id="opponent?.userId || null"/></aside></div>
     </template><p v-else>Đang tải ván cờ…</p>
   </section>
 </template>

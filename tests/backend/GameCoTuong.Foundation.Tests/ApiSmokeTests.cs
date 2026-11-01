@@ -60,4 +60,11 @@ public sealed class ApiSmokeTests : IClassFixture<TestApiFactory>
         using var response = await client.GetAsync("/api/v1/rooms");
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
+
+    [Fact]
+    public async Task Match_reconnect_requires_authentication()
+    {
+        using var response = await client.PostAsync($"/api/v1/matches/{Guid.NewGuid()}/reconnect", null);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
 }

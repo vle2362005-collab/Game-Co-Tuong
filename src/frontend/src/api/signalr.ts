@@ -32,7 +32,7 @@ export function createSignalRClient(options: SignalRClientOptions = {}) {
     active.onreconnecting(() => { isConnected.value = false })
     active.onreconnected(id => {
       isConnected.value = true; connectionId.value = id || null
-      for (const handler of handlers.get('Reconnected') || []) handler()
+      for (const handler of handlers.get('TransportReconnected') || []) handler()
     })
     active.onclose(() => { isConnected.value = false; connectionId.value = null })
     starting = (async () => {

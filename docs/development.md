@@ -63,6 +63,12 @@ dotnet run --project src/backend/GameCoTuong.Api -c Release --no-build --no-rest
 
 Sau đó sửa `VITE_API_BASE_URL=http://localhost:5001`. Nếu đổi origin frontend, đặt `BrowserClient__AllowedOrigins__0` tương ứng hoặc thêm vào appsettings.Local.json. Origin phải có scheme + host + port, không có đường dẫn, dấu `/` cuối, ký tự `*` hoặc thông tin đăng nhập. API chỉ cho phép hai origin phát triển mặc định, không bật cookie credentials. CORS là quy tắc trình duyệt, không thay thế xác thực. Xác thực và SignalR được triển khai ở task riêng.
 
+### Truy vết lỗi backend
+
+API ghi log có cấu trúc với `TraceId`, `RequestId`, `RoomId`, `MatchId`, `ErrorCode` và `StatusCode` phù hợp với từng request. Client có thể gửi `X-Request-ID`; API trả `X-Trace-Id` để đối chiếu log. Lỗi nghiệp vụ 4xx được ghi riêng với lỗi nội bộ 5xx. Response 5xx chỉ chứa mã và thông điệp an toàn; stack trace được giữ ở log backend sau khi lọc thông tin nhạy cảm.
+
+Các sự kiện SignalR connected, disconnected, reconnected, session expiry và timeout cũng được ghi log cùng trạng thái kết nối và định danh phòng/trận khi có. Không ghi password, JWT, access token hoặc nội dung request nhạy cảm vào log; khi chia sẻ log để xử lý sự cố vẫn cần áp dụng quy định bảo vệ log của môi trường triển khai.
+
 ## 4. Phụ thuộc và lockfile
 
 - `Api → Application + Infrastructure`; `Application → Domain + Engine`; `Infrastructure → Application + Domain`; `Engine → Domain`; Domain không tham chiếu project khác.

@@ -3,6 +3,12 @@ namespace GameCoTuong.Api.Middleware;
 public static class LogSanitizer
 {
     private const string Redacted = "[REDACTED]";
+    private static readonly System.Text.RegularExpressions.Regex SensitiveValue = new(
+        """(?i)(["']?(?:password|passwd|pwd|token|access_token|refresh_token|authorization|secret|signingkey)["']?\s*[:=]\s*["']?)[^"'\s,;&}]+""",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly System.Text.RegularExpressions.Regex BearerToken = new(
+        """(?i)(Bearer\s+)[A-Za-z0-9._~+/-]+=*""",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
 
     public static string SanitizeUrl(string? url)
     {
@@ -68,6 +74,7 @@ public static class LogSanitizer
             eyJIndex = result.IndexOf("eyJ", eyJIndex + Redacted.Length, StringComparison.Ordinal);
         }
 
-        return result;
+        result = SensitiveValue.Replace(result, $"$1{Redacted}");
+        return BearerToken.Replace(result, $"$1{Redacted}");
     }
 }

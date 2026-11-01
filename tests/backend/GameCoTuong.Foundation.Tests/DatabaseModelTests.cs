@@ -72,6 +72,21 @@ public sealed class DatabaseModelTests
         // Rooms: Code has unique filtered index
         var roomType = context.Model.FindEntityType(typeof(Room))!;
         Assert.Contains(roomType.GetIndexes(), idx => idx.IsUnique && idx.Properties.Any(p => p.Name == nameof(Room.Code)) && idx.GetFilter() == "[Status] <> 'closed'");
+
+        var matchType = context.Model.FindEntityType(typeof(Match))!;
+        Assert.Contains(matchType.GetIndexes(), idx => idx.IsUnique
+            && idx.Properties.Select(p => p.Name).SequenceEqual(new[] { nameof(Match.RoomId) })
+            && idx.GetFilter() == "[Status] IN ('playing', 'paused')");
+    }
+
+    [Fact]
+    public void Room_and_match_versions_are_optimistic_concurrency_tokens()
+    {
+        var roomVersion = context.Model.FindEntityType(typeof(Room))!.FindProperty(nameof(Room.Version))!;
+        var matchVersion = context.Model.FindEntityType(typeof(Match))!.FindProperty(nameof(Match.Version))!;
+
+        Assert.True(roomVersion.IsConcurrencyToken);
+        Assert.True(matchVersion.IsConcurrencyToken);
     }
 
     [Fact]

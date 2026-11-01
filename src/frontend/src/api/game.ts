@@ -4,7 +4,8 @@ export interface Room { id: string; code: string; name: string; hostUserId: stri
 export interface Piece { id: string; type: string; side: string; position: { col: number; row: number } }
 export interface LegalMove { pieceId: string; to: { col: number; row: number } }
 export interface ConfirmedMove { requestId: string; ply: number; side: string; pieceId: string; fromCol: number; fromRow: number; toCol: number; toRow: number; capturedPieceId: string | null }
-export interface Match { id: string; roomId: string; status: string; version: number; moveNumber: number; sideToMove: string; pieces: Piece[]; winner: string | null; resultReason: string | null; check: boolean; players: { userId: string; side: string }[]; drawOfferedBy: string | null; legalMoves?: LegalMove[]; lastMove?: ConfirmedMove | null }
+export interface MatchResult { status: string; winner: string | null; outcome: 'red-win' | 'black-win' | 'draw' | 'cancelled'; reasonCode: string; reason: string | null; endedAt: string | null }
+export interface Match { id: string; roomId: string; status: string; version: number; moveNumber: number; sideToMove: string; pieces: Piece[]; winner: string | null; resultReason: string | null; reasonCode: string | null; result: MatchResult | null; check: boolean; players: { userId: string; side: string }[]; drawOfferId: string | null; drawOfferedBy: string | null; drawCreatedAt: string | null; drawExpiresAt: string | null; legalMoves?: LegalMove[]; lastMove?: ConfirmedMove | null }
 export interface Message { id: string; roomId: string; senderId: string; senderName: string; content: string; sentAt: string; sequence: number }
 export const gameApi = {
   rooms: () => apiClient.get<Room[]>('/api/v1/rooms'),
@@ -16,6 +17,12 @@ export const gameApi = {
   leave: (id: string) => apiClient.post<Room>(`/api/v1/rooms/${id}/leave`),
   match: (id: string) => apiClient.get<Match>(`/api/v1/matches/${id}`),
   move: (id: string, pieceId: string, col: number, row: number, expectedVersion: number, requestId: string) => apiClient.post<Match>(`/api/v1/matches/${id}/moves`, { pieceId, toCol: col, toRow: row, expectedVersion, requestId }),
-  end: (id: string, draw = false) => apiClient.post<Match>(`/api/v1/matches/${id}/${draw ? 'draw' : 'resign'}`),
+  surrender: (id: string, confirmed: boolean) => apiClient.post<Match>(`/api/v1/matches/${id}/surrender`, { confirmed }),
+  offerDraw: (id: string) => apiClient.post<Match>(`/api/v1/matches/${id}/offer-draw`),
+  acceptDraw: (id: string, offerId: string) => apiClient.post<Match>(`/api/v1/matches/${id}/accept-draw`, { offerId }),
+  rejectDraw: (id: string, offerId: string) => apiClient.post<Match>(`/api/v1/matches/${id}/reject-draw`, { offerId }),
+  end: (id: string, draw = false, confirmed = false) => draw
+    ? apiClient.post<Match>(`/api/v1/matches/${id}/offer-draw`)
+    : apiClient.post<Match>(`/api/v1/matches/${id}/surrender`, { confirmed }),
   messages: (id: string) => apiClient.get<Message[]>(`/api/v1/rooms/${id}/messages`)
 }

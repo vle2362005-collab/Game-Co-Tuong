@@ -7,6 +7,12 @@ using GameCoTuong.Api.Endpoints;
 using GameCoTuong.Api.Hubs;
 using GameCoTuong.Application.Auth.Models;
 using GameCoTuong.Application.Common.Interfaces;
+using GameCoTuong.Domain.Entities;
+using GameCoTuong.Domain.Enums;
+using GameCoTuong.Domain.ValueObjects;
+using GameCoTuong.Engine.Model;
+using GameCoTuong.Engine.Rules;
+using GameCoTuong.Engine.Serialization;
 using GameCoTuong.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -156,6 +162,7 @@ public sealed class CoreApiAcceptanceTests : IDisposable
     {
         var (red,black,_,id)=await Start();var first=await Data(await red.Client.GetAsync($"/api/v1/matches/{id}"));
         Assert.True(first.GetProperty("lastMove").ValueKind==JsonValueKind.Null);Assert.NotEmpty(first.GetProperty("legalMoves").EnumerateArray());
+        Assert.False(first.GetProperty("isCheck").GetBoolean());Assert.True(first.GetProperty("checkedKingPos").ValueKind==JsonValueKind.Null);
         var moved=await Data(await red.Client.PostAsJsonAsync($"/api/v1/matches/{id}/moves",Move(1,"red-cannon-1",1,0)));
         Assert.Equal(31,moved.GetProperty("pieces").GetArrayLength());Assert.Equal(2,moved.GetProperty("version").GetInt64());Assert.Equal("black",moved.GetProperty("sideToMove").GetString());
         Assert.Equal("black-horse-1",moved.GetProperty("lastMove").GetProperty("capturedPieceId").GetString());
@@ -163,21 +170,71 @@ public sealed class CoreApiAcceptanceTests : IDisposable
         var offered=await Data(await black.Client.PostAsync($"/api/v1/matches/{id}/draw",null));Assert.Equal(3,offered.GetProperty("version").GetInt64());
         var repeated=await Data(await black.Client.PostAsync($"/api/v1/matches/{id}/draw",null));Assert.Equal(3,repeated.GetProperty("version").GetInt64());
     }
+    [Fact] public async Task GCT83_selected_hints_and_check_markers_update_in_api_and_signalr()
+    {
+        var (red,black,_,id)=await Start();
+        var board=new Board(new[]
+        {
+            new Piece("red-general-1",PieceType.General,Side.Red,new Position(3,9)),
+            new Piece("black-general-1",PieceType.General,Side.Black,new Position(4,0)),
+            new Piece("red-chariot-1",PieceType.Chariot,Side.Red,new Position(4,3))
+        });
+        using(var db=Db())
+        {
+            var match=await db.Matches.SingleAsync(m=>m.Id==id);
+            match.SideToMove="black";
+            match.CurrentBoardJson=BoardSerializer.Serialize(board);
+            await db.SaveChangesAsync();
+        }
+
+        var checkedState=await Data(await black.Client.GetAsync($"/api/v1/matches/{id}"));
+        Assert.True(checkedState.GetProperty("check").GetBoolean());
+        Assert.True(checkedState.GetProperty("isCheck").GetBoolean());
+        Assert.Equal(4,checkedState.GetProperty("checkedKingPos").GetProperty("col").GetInt32());
+        Assert.Equal(0,checkedState.GetProperty("checkedKingPos").GetProperty("row").GetInt32());
+        Assert.True(checkedState.GetProperty("lastMove").ValueKind==JsonValueKind.Null);
+
+        var hints=await Data(await black.Client.GetAsync($"/api/v1/matches/{id}/legal-moves?pieceId=black-general-1"));
+        Assert.Contains(hints.EnumerateArray(),move=>move.GetProperty("to").GetProperty("col").GetInt32()==5&&move.GetProperty("to").GetProperty("row").GetInt32()==0);
+        Assert.All(hints.EnumerateArray(),move=>Assert.False(XiangqiRules.IsInCheck(
+            board.ApplyMove(move.GetProperty("pieceId").GetString()!,new Position(
+                move.GetProperty("to").GetProperty("col").GetInt32(),move.GetProperty("to").GetProperty("row").GetInt32()),out _),Side.Black)));
+        Assert.Empty((await Data(await black.Client.GetAsync($"/api/v1/matches/{id}/legal-moves?pieceId=red-chariot-1"))).EnumerateArray());
+
+        var escaped=await Data(await black.Client.PostAsJsonAsync($"/api/v1/matches/{id}/moves",Move(1,"black-general-1",5,0)));
+        Assert.False(escaped.GetProperty("isCheck").GetBoolean());
+        Assert.True(escaped.GetProperty("checkedKingPos").ValueKind==JsonValueKind.Null);
+        Assert.Equal("black-general-1",escaped.GetProperty("lastMove").GetProperty("pieceId").GetString());
+        Assert.Equal(5,escaped.GetProperty("lastMove").GetProperty("toCol").GetInt32());
+        var pushed=JsonSerializer.SerializeToElement(events.Events.Last(e=>e.Method=="MatchChanged").Args[0],new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.False(pushed.GetProperty("isCheck").GetBoolean());
+        Assert.True(pushed.GetProperty("checkedKingPos").ValueKind==JsonValueKind.Null);
+        Assert.Equal("black-general-1",pushed.GetProperty("lastMove").GetProperty("pieceId").GetString());
+
+        var eventCount=events.Messages.Count(m=>m=="MatchChanged");
+        Assert.Equal("INVALID_MOVE",await Error(await red.Client.PostAsJsonAsync(
+            $"/api/v1/matches/{id}/moves",Move(2,"red-chariot-1",5,0)),HttpStatusCode.BadRequest));
+        Assert.Equal(escaped.GetRawText(),(await Data(await red.Client.GetAsync($"/api/v1/matches/{id}"))).GetRawText());
+        Assert.Equal(eventCount,events.Messages.Count(m=>m=="MatchChanged"));
+        using var verify=Db();Assert.Single(await verify.Moves.Where(m=>m.MatchId==id).ToListAsync());
+    }
     [Fact] public async Task GCT108_match_history_is_persistent_and_visible_only_to_players()
     {
         var (red,black,roomId,id)=await Start();
         await Data(await red.Client.PostAsJsonAsync($"/api/v1/matches/{id}/moves",Move(1)));
-        await Data(await black.Client.PostAsync($"/api/v1/matches/{id}/resign",null));
-        await Data(await black.Client.PostAsync($"/api/v1/matches/{id}/resign",null));
+        await Data(await black.Client.PostAsJsonAsync($"/api/v1/matches/{id}/resign",new {confirmed=true}));
+        await Data(await black.Client.PostAsJsonAsync($"/api/v1/matches/{id}/resign",new {confirmed=true}));
         await Data(await red.Client.PostAsync($"/api/v1/rooms/{roomId}/close",null));
 
-        var redHistory=await Data(await red.Client.GetAsync("/api/v1/matches"));
-        var redMatch=Assert.Single(redHistory.EnumerateArray());
+        var redHistory=await Data(await red.Client.GetAsync("/api/v1/matches/history"));
+        var redMatch=Assert.Single(redHistory.GetProperty("items").EnumerateArray());
         Assert.Equal(id,redMatch.GetProperty("id").GetGuid());
         Assert.Equal("win",redMatch.GetProperty("outcome").GetString());
         Assert.Equal("red",redMatch.GetProperty("playerSide").GetString());
         Assert.Equal(1,redMatch.GetProperty("moveNumber").GetInt32());
-        Assert.Equal("loss",(await Data(await black.Client.GetAsync("/api/v1/matches")))[0].GetProperty("outcome").GetString());
+        Assert.Equal("surrender",redMatch.GetProperty("reasonCode").GetString());
+        var blackHistory=await Data(await black.Client.GetAsync("/api/v1/matches"));
+        Assert.Equal("loss",blackHistory.GetProperty("items")[0].GetProperty("outcome").GetString());
 
         var detail=await Data(await red.Client.GetAsync($"/api/v1/matches/{id}/history"));
         Assert.Equal(id,detail.GetProperty("id").GetGuid());
@@ -189,20 +246,211 @@ public sealed class CoreApiAcceptanceTests : IDisposable
         Assert.Single(detail.GetProperty("moves").EnumerateArray());
 
         var (drawRed,drawBlack,_,drawId)=await Start();
-        await Data(await drawRed.Client.PostAsync($"/api/v1/matches/{drawId}/draw",null));
-        await Data(await drawBlack.Client.PostAsync($"/api/v1/matches/{drawId}/draw",null));
+        var drawOffer=await Data(await drawRed.Client.PostAsync($"/api/v1/matches/{drawId}/offer-draw",null));
+        await Data(await drawBlack.Client.PostAsJsonAsync($"/api/v1/matches/{drawId}/accept-draw",
+            new {offerId=drawOffer.GetProperty("drawOfferId").GetGuid()}));
         var drawDetail=await Data(await drawRed.Client.GetAsync($"/api/v1/matches/{drawId}/history"));
         Assert.Equal("draw",drawDetail.GetProperty("outcome").GetString());
         Assert.Equal("draw-agreement",drawDetail.GetProperty("resultReason").GetString());
 
         var outsider=await User("history_outsider");
-        Assert.Empty((await Data(await outsider.Client.GetAsync("/api/v1/matches"))).EnumerateArray());
+        Assert.Empty((await Data(await outsider.Client.GetAsync("/api/v1/matches"))).GetProperty("items").EnumerateArray());
         await Error(await outsider.Client.GetAsync($"/api/v1/matches/{id}/history"),HttpStatusCode.Forbidden);
+        await Error(await outsider.Client.GetAsync($"/api/v1/matches/{id}"),HttpStatusCode.Forbidden);
+        await Error(await outsider.Client.GetAsync($"/api/v1/matches/{id}/moves"),HttpStatusCode.Forbidden);
         var anonymous=Client();
         await Error(await anonymous.GetAsync("/api/v1/matches"),HttpStatusCode.Unauthorized);
         using var db=Db();
         Assert.Equal(1,await db.Matches.CountAsync(m=>m.Id==id));
         Assert.Equal(1,await db.Moves.CountAsync(m=>m.MatchId==id));
+    }
+    [Fact] public async Task GCT91_match_history_is_paginated_filtered_and_cancelled_matches_have_no_outcome()
+    {
+        var (red,_,roomId,id)=await Start();
+        Guid cancelledId;
+        using (var db=Db())
+        {
+            cancelledId=Guid.NewGuid();
+            db.Matches.Add(new Match
+            {
+                Id=cancelledId,RoomId=roomId,Mode="pve",Status="cancelled",Winner="red",
+                ResultReason="cancellation",StartedAt=DateTimeOffset.UtcNow.AddMinutes(1),
+                EndedAt=DateTimeOffset.UtcNow,InitialBoardJson="{}",CurrentBoardJson="{}",
+                Players=[new MatchPlayer {UserId=red.Id,Side="red"}]
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var firstPage=await Data(await red.Client.GetAsync("/api/v1/matches/history?page=1&pageSize=1"));
+        Assert.Equal(1,firstPage.GetProperty("page").GetInt32());
+        Assert.Equal(1,firstPage.GetProperty("pageSize").GetInt32());
+        Assert.Equal(2,firstPage.GetProperty("totalCount").GetInt32());
+        Assert.Equal(2,firstPage.GetProperty("totalPages").GetInt32());
+        var firstMatch=Assert.Single(firstPage.GetProperty("items").EnumerateArray());
+        Assert.Equal(cancelledId,firstMatch.GetProperty("id").GetGuid());
+        Assert.Equal("cancelled",firstMatch.GetProperty("outcome").GetString());
+        Assert.Equal("pve",firstMatch.GetProperty("mode").GetString());
+        Assert.Equal("Máy",firstMatch.GetProperty("opponent").GetProperty("displayName").GetString());
+        Assert.Null(firstMatch.GetProperty("opponent").GetProperty("userId").GetString());
+
+        var secondPage=await Data(await red.Client.GetAsync("/api/v1/matches/history?page=2&pageSize=1"));
+        Assert.Equal(id,Assert.Single(secondPage.GetProperty("items").EnumerateArray()).GetProperty("id").GetGuid());
+        Assert.Equal(1,(await Data(await red.Client.GetAsync(
+            "/api/v1/matches/history?outcome=cancelled&mode=pve"))).GetProperty("totalCount").GetInt32());
+        Assert.Equal(0,(await Data(await red.Client.GetAsync(
+            "/api/v1/matches/history?outcome=win&mode=pve"))).GetProperty("totalCount").GetInt32());
+        await Error(await red.Client.GetAsync("/api/v1/matches/history?page=0"),HttpStatusCode.BadRequest);
+        await Error(await red.Client.GetAsync("/api/v1/matches/history?pageSize=101"),HttpStatusCode.BadRequest);
+        await Error(await red.Client.GetAsync("/api/v1/matches/history?outcome=unknown"),HttpStatusCode.BadRequest);
+    }
+    [Fact] public async Task GCT116_closed_room_preserves_match_result_moves_and_player_access()
+    {
+        var (red,black,roomId,id)=await Start();
+        var redRequest=Guid.NewGuid();
+        var redMove=Move(1,request:redRequest);
+        await Data(await red.Client.PostAsJsonAsync($"/api/v1/matches/{id}/moves",redMove));
+        await Data(await red.Client.PostAsJsonAsync($"/api/v1/matches/{id}/moves",redMove));
+        var blackMove=new {requestId=Guid.NewGuid(),expectedVersion=2,pieceId="black-soldier-1",toCol=0,toRow=4};
+        await Data(await black.Client.PostAsJsonAsync($"/api/v1/matches/{id}/moves",blackMove));
+
+        var firstEnd=await Data(await black.Client.PostAsJsonAsync($"/api/v1/matches/{id}/resign",new {confirmed=true}));
+        var retriedEnd=await Data(await black.Client.PostAsJsonAsync($"/api/v1/matches/{id}/resign",new {confirmed=true}));
+        Assert.Equal(firstEnd.GetRawText(),retriedEnd.GetRawText());
+        Assert.Equal("finished",firstEnd.GetProperty("status").GetString());
+        Assert.Equal("red",firstEnd.GetProperty("winner").GetString());
+        Assert.Equal("resignation",firstEnd.GetProperty("resultReason").GetString());
+
+        var redDetails=await Data(await red.Client.GetAsync($"/api/v1/matches/{id}/history"));
+        var redMoves=await Data(await red.Client.GetAsync($"/api/v1/matches/{id}/moves"));
+        var redSnapshot=await Data(await red.Client.GetAsync($"/api/v1/matches/{id}"));
+        var blackDetails=await Data(await black.Client.GetAsync($"/api/v1/matches/{id}/history"));
+        var blackMoves=await Data(await black.Client.GetAsync($"/api/v1/matches/{id}/moves"));
+        var blackSnapshot=await Data(await black.Client.GetAsync($"/api/v1/matches/{id}"));
+
+        var moves=redDetails.GetProperty("moves").EnumerateArray().ToArray();
+        Assert.Equal(2,moves.Length);
+        Assert.Equal(1,moves[0].GetProperty("ply").GetInt32());
+        Assert.Equal(redRequest,moves[0].GetProperty("requestId").GetGuid());
+        Assert.Equal("red",moves[0].GetProperty("side").GetString());
+        Assert.Equal(2,moves[1].GetProperty("ply").GetInt32());
+        Assert.Equal(blackMove.requestId,moves[1].GetProperty("requestId").GetGuid());
+        Assert.Equal("black",moves[1].GetProperty("side").GetString());
+
+        var replay=BoardSerializer.Deserialize(redDetails.GetProperty("initialBoardJson").GetString()!);
+        for(var index=0;index<moves.Length;index++)
+        {
+            var move=moves[index];
+            replay=replay.ApplyMove(move.GetProperty("pieceId").GetString()!,
+                new(move.GetProperty("toCol").GetInt32(),move.GetProperty("toRow").GetInt32()),out _);
+            Assert.Equal(BoardSerializer.Serialize(replay),move.GetProperty("boardSnapshotJson").GetString());
+        }
+        var replayedBoard=BoardSerializer.Serialize(replay);
+        Assert.Equal(replayedBoard,redDetails.GetProperty("currentBoardJson").GetString());
+        Assert.Equal(redDetails.GetProperty("currentBoardJson").GetString(),redMoves.GetProperty("currentBoardJson").GetString());
+        Assert.Equal("finished",redDetails.GetProperty("status").GetString());
+        Assert.Equal("red",redDetails.GetProperty("winner").GetString());
+        Assert.Equal("resignation",redDetails.GetProperty("resultReason").GetString());
+        Assert.Equal(2,redSnapshot.GetProperty("moveNumber").GetInt32());
+
+        using(var db=Db())
+        {
+            Assert.Equal(1,await db.Matches.CountAsync(m=>m.Id==id));
+            Assert.Equal(2,await db.Moves.CountAsync(m=>m.MatchId==id));
+        }
+
+        var closed=await Data(await red.Client.PostAsync($"/api/v1/rooms/{roomId}/close",null));
+        Assert.Equal("closed",closed.GetProperty("status").GetString());
+        Assert.Empty(closed.GetProperty("members").EnumerateArray());
+
+        Assert.Equal(redDetails.GetRawText(),(await Data(await red.Client.GetAsync($"/api/v1/matches/{id}/history"))).GetRawText());
+        Assert.Equal(redMoves.GetRawText(),(await Data(await red.Client.GetAsync($"/api/v1/matches/{id}/moves"))).GetRawText());
+        Assert.Equal(redSnapshot.GetRawText(),(await Data(await red.Client.GetAsync($"/api/v1/matches/{id}"))).GetRawText());
+        Assert.Equal(blackDetails.GetRawText(),(await Data(await black.Client.GetAsync($"/api/v1/matches/{id}/history"))).GetRawText());
+        Assert.Equal(blackMoves.GetRawText(),(await Data(await black.Client.GetAsync($"/api/v1/matches/{id}/moves"))).GetRawText());
+        Assert.Equal(blackSnapshot.GetRawText(),(await Data(await black.Client.GetAsync($"/api/v1/matches/{id}"))).GetRawText());
+        Assert.Equal(id,Assert.Single((await Data(await red.Client.GetAsync("/api/v1/matches"))).GetProperty("items").EnumerateArray()).GetProperty("id").GetGuid());
+        Assert.Equal(id,Assert.Single((await Data(await black.Client.GetAsync("/api/v1/matches"))).GetProperty("items").EnumerateArray()).GetProperty("id").GetGuid());
+
+        var outsider=await User("history_outsider");
+        await Error(await outsider.Client.GetAsync($"/api/v1/matches/{id}/history"),HttpStatusCode.Forbidden);
+        await Error(await outsider.Client.GetAsync($"/api/v1/matches/{id}/moves"),HttpStatusCode.Forbidden);
+        await Error(await outsider.Client.GetAsync($"/api/v1/matches/{id}"),HttpStatusCode.Forbidden);
+        Assert.Empty((await Data(await outsider.Client.GetAsync("/api/v1/matches"))).GetProperty("items").EnumerateArray());
+
+        using var verify=Db();
+        Assert.Equal("closed",(await verify.Rooms.AsNoTracking().SingleAsync(r=>r.Id==roomId)).Status);
+        Assert.Equal(0,await verify.RoomMemberships.CountAsync(m=>m.RoomId==roomId&&m.LeftAt==null));
+        Assert.Equal(1,await verify.Matches.CountAsync(m=>m.Id==id&&m.Status=="finished"&&m.Winner=="red"&&m.ResultReason=="resignation"));
+        Assert.Equal(2,await verify.Moves.CountAsync(m=>m.MatchId==id));
+    }
+
+    [Fact] public async Task GCT16_surrender_and_explicit_draw_endpoints_enforce_confirmation_and_offer_ownership()
+    {
+        var (red,black,_,surrenderId)=await Start();
+        Assert.Equal("CONFIRMATION_REQUIRED",await Error(
+            await black.Client.PostAsJsonAsync($"/api/v1/matches/{surrenderId}/surrender",new {confirmed=false}),
+            HttpStatusCode.BadRequest));
+        var eventsBeforeCancel=events.Messages.Count(m=>m=="MatchChanged");
+        using(var verifyCancel=Db())
+        {
+            var state=await verifyCancel.Matches.AsNoTracking().SingleAsync(m=>m.Id==surrenderId);
+            Assert.Equal("playing",state.Status);
+            Assert.Equal(1,state.Version);
+            Assert.Null(state.Winner);
+            Assert.Null(state.ResultReason);
+        }
+        Assert.Equal(eventsBeforeCancel,events.Messages.Count(m=>m=="MatchChanged"));
+        var surrendered=await Data(await black.Client.PostAsJsonAsync(
+            $"/api/v1/matches/{surrenderId}/surrender",new {confirmed=true}));
+        Assert.Equal("red",surrendered.GetProperty("winner").GetString());
+        Assert.Equal("surrender",surrendered.GetProperty("reasonCode").GetString());
+        Assert.Equal("surrender",surrendered.GetProperty("result").GetProperty("reasonCode").GetString());
+        Assert.Equal("red",surrendered.GetProperty("result").GetProperty("winner").GetString());
+        Assert.Equal("red-win",surrendered.GetProperty("result").GetProperty("outcome").GetString());
+        var endedVersion=surrendered.GetProperty("version").GetInt64();
+        var redSnapshot=await Data(await red.Client.GetAsync($"/api/v1/matches/{surrenderId}"));
+        var blackSnapshot=await Data(await black.Client.GetAsync($"/api/v1/matches/{surrenderId}"));
+        Assert.Equal(redSnapshot.GetProperty("result").GetRawText(),blackSnapshot.GetProperty("result").GetRawText());
+        var pushed=JsonSerializer.SerializeToElement(
+            events.Events.Last(e=>e.Method=="MatchChanged").Args[0],new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal(surrendered.GetProperty("result").GetRawText(),pushed.GetProperty("result").GetRawText());
+        Assert.Equal("surrender",pushed.GetProperty("reasonCode").GetString());
+        Assert.Equal("MATCH_NOT_PLAYING", await Error(
+            await black.Client.PostAsJsonAsync($"/api/v1/matches/{surrenderId}/moves",Move(endedVersion)),
+            HttpStatusCode.Conflict));
+        using(var verifyLocked=Db())
+        {
+            var state=await verifyLocked.Matches.AsNoTracking().SingleAsync(m=>m.Id==surrenderId);
+            Assert.Equal(0,state.MoveNumber);
+            Assert.Equal("red",state.Winner);
+            Assert.Equal("resignation",state.ResultReason);
+        }
+        var retry=await Data(await black.Client.PostAsJsonAsync(
+            $"/api/v1/matches/{surrenderId}/surrender",new {confirmed=true}));
+        Assert.Equal(endedVersion,retry.GetProperty("version").GetInt64());
+
+        var (drawRed,drawBlack,_,drawId)=await Start();
+        var offered=await Data(await drawRed.Client.PostAsync($"/api/v1/matches/{drawId}/offer-draw",null));
+        Assert.Equal("red",offered.GetProperty("drawOfferedBy").GetString());
+        var offerId=offered.GetProperty("drawOfferId").GetGuid();
+        Assert.Equal(30,(offered.GetProperty("drawExpiresAt").GetDateTimeOffset() -
+            offered.GetProperty("drawCreatedAt").GetDateTimeOffset()).TotalSeconds);
+        Assert.Equal("DRAW_OFFER_NOT_YOURS",await Error(
+            await drawRed.Client.PostAsJsonAsync($"/api/v1/matches/{drawId}/accept-draw",new {offerId}),
+            HttpStatusCode.Conflict));
+        var rejected=await Data(await drawBlack.Client.PostAsJsonAsync(
+            $"/api/v1/matches/{drawId}/reject-draw",new {offerId}));
+        Assert.Equal("playing",rejected.GetProperty("status").GetString());
+        Assert.True(rejected.GetProperty("drawOfferId").ValueKind==JsonValueKind.Null);
+
+        var nextOffer=await Data(await drawRed.Client.PostAsync($"/api/v1/matches/{drawId}/offer-draw",null));
+        var accepted=await Data(await drawBlack.Client.PostAsJsonAsync(
+            $"/api/v1/matches/{drawId}/accept-draw",
+            new {offerId=nextOffer.GetProperty("drawOfferId").GetGuid()}));
+        Assert.Equal("finished",accepted.GetProperty("status").GetString());
+        Assert.Null(accepted.GetProperty("winner").GetString());
+        Assert.Equal("draw-agreement",accepted.GetProperty("resultReason").GetString());
+        Assert.Equal("draw-agreement",accepted.GetProperty("result").GetProperty("reasonCode").GetString());
     }
     public void Dispose() {foreach(var c in clients)c.Dispose();factory.Dispose();root.Dispose();Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();File.Delete(path);}
 
@@ -221,6 +469,7 @@ public sealed class CoreApiAcceptanceTests : IDisposable
     private sealed class EventRecorder:IHubContext<GameHub>,IHubClients,IGroupManager,IClientProxy
     {
         public ConcurrentQueue<string> Messages {get;}=new();
+        public ConcurrentQueue<(string Method,object?[] Args)> Events {get;}=new();
         IHubClients IHubContext<GameHub>.Clients=>this;IGroupManager IHubContext<GameHub>.Groups=>this;public IClientProxy All=>this;
         public IClientProxy AllExcept(IReadOnlyList<string> excludedConnectionIds)=>this;
         public IClientProxy Client(string connectionId)=>this;public IClientProxy Clients(IReadOnlyList<string> connectionIds)=>this;
@@ -228,6 +477,6 @@ public sealed class CoreApiAcceptanceTests : IDisposable
         public IClientProxy Groups(IReadOnlyList<string> groupNames)=>this;public IClientProxy User(string userId)=>this;public IClientProxy Users(IReadOnlyList<string> userIds)=>this;
         public Task AddToGroupAsync(string connectionId,string groupName,CancellationToken cancellationToken=default)=>Task.CompletedTask;
         public Task RemoveFromGroupAsync(string connectionId,string groupName,CancellationToken cancellationToken=default)=>Task.CompletedTask;
-        public Task SendCoreAsync(string method,object?[] args,CancellationToken cancellationToken=default){Messages.Enqueue(method);return Task.CompletedTask;}
+        public Task SendCoreAsync(string method,object?[] args,CancellationToken cancellationToken=default){Messages.Enqueue(method);Events.Enqueue((method,args));return Task.CompletedTask;}
     }
 }
