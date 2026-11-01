@@ -7,32 +7,61 @@ using Microsoft.AspNetCore.SignalR;
 
 namespace GameCoTuong.Api.Hubs;
 
-public class GameHub(IRoomAuthorizationService auth, GameService game, LiveConnections live, VideoCalls calls) : Hub
+public class GameHub(IRoomAuthorizationService auth, GameService game, LiveConnections live, VideoCalls calls, ILogger<GameHub> logger) : Hub
 {
+    public GameHub(IRoomAuthorizationService auth, GameService game, LiveConnections live, VideoCalls calls)
+        : this(auth, game, live, calls, Microsoft.Extensions.Logging.Abstractions.NullLogger<GameHub>.Instance) { }
+
     public const string LobbyGroupName = "lobby";
     public static string GetRoomGroupName(Guid id) => $"room-{id}";
     public Guid? GetCallerUserId() => Guid.TryParse(Context.User?.FindFirstValue(ClaimTypes.NameIdentifier) ?? Context.User?.FindFirstValue("sub"), out var id) ? id : null;
+    private string? TraceId => System.Diagnostics.Activity.Current?.TraceId.ToString() ?? Context.GetHttpContext()?.TraceIdentifier;
     private Guid UserId => GetCallerUserId() ?? throw new HubException("UNAUTHORIZED: Cần đăng nhập.");
 
     public override Task OnConnectedAsync()
     {
-        if (Context.User?.Identity?.IsAuthenticated != true || GetCallerUserId() is null) { Context.Abort(); return Task.CompletedTask; }
+        if (Context.User?.Identity?.IsAuthenticated != true || GetCallerUserId() is null)
+        {
+            logger.LogWarning("SignalR connection rejected. {TraceId} {ConnectionId} {ErrorCode} {StatusCode} {ConnectionState}",
+                TraceId, Context.ConnectionId, "UNAUTHORIZED", StatusCodes.Status401Unauthorized, "aborted");
+            Context.Abort();
+            return Task.CompletedTask;
+        }
         live.Add(Context.ConnectionId, UserId);
+        logger.LogInformation("SignalR connection established. {TraceId} {UserId} {ConnectionId} {ConnectionState}",
+            TraceId, UserId, Context.ConnectionId, "connected");
         return base.OnConnectedAsync();
     }
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
         var info = live.Remove(Context.ConnectionId);
+        logger.LogInformation(
+            "SignalR connection disconnected. {TraceId} {UserId} {RoomId} {ConnectionId} {ConnectionState} {ErrorCode}",
+            TraceId, info?.User, info?.Room, Context.ConnectionId,
+            "disconnected", exception is null ? null : "CONNECTION_INTERRUPTED");
         if (info?.Room is Guid roomId && !live.Has(info.Value.User, roomId))
         {
             try
             {
                 var room = await game.Presence(roomId, info.Value.User, false);
+                logger.LogInformation("SignalR room presence set offline. {RoomId} {MatchId} {UserId} {ConnectionState}",
+                    roomId, room.MatchId, info.Value.User, "disconnected");
                 calls.End(roomId, info.Value.User);
                 await Clients.Group(GetRoomGroupName(roomId)).SendAsync("CallEnded");
                 await Clients.Group(GetRoomGroupName(roomId)).SendAsync("RoomStateChanged", room);
+                if (room.MatchId is Guid matchId)
+                {
+                    await Clients.Group(GetRoomGroupName(roomId)).SendAsync(
+                        "PlayerDisconnected", await game.DisconnectionSnapshot(matchId, info.Value.User));
+                    await Clients.Group(GetRoomGroupName(roomId)).SendAsync(
+                        "MatchChanged", await game.MatchStateSnapshot(matchId, info.Value.User));
+                }
             }
-            catch (GameFault) { }
+            catch (GameFault fault)
+            {
+                logger.LogWarning("SignalR disconnect presence update rejected. {RoomId} {ErrorCode} {StatusCode}",
+                    roomId, fault.Code, fault.Status);
+            }
         }
         await base.OnDisconnectedAsync(exception);
     }
@@ -47,11 +76,30 @@ public class GameHub(IRoomAuthorizationService auth, GameService game, LiveConne
     {
         var permission = await auth.AuthorizeRoomMemberAsync(roomId, UserId);
         if (!permission.IsAuthorized) throw new HubException($"FORBIDDEN: {permission.ErrorMessage}");
-        live.Add(Context.ConnectionId, UserId, roomId);
+        var alreadyJoined = live.IsInRoom(Context.ConnectionId, UserId, roomId);
+        if (!alreadyJoined) live.Add(Context.ConnectionId, UserId, roomId);
         await Groups.AddToGroupAsync(Context.ConnectionId, GetRoomGroupName(roomId));
-        var room = await game.Presence(roomId, UserId, true);
-        await Clients.Group(GetRoomGroupName(roomId)).SendAsync("PlayerJoinedRoom", new { roomId, userId = UserId });
-        await Clients.Group(GetRoomGroupName(roomId)).SendAsync("RoomStateChanged", room);
+        var room = alreadyJoined
+            ? await game.Snapshot(roomId, UserId)
+            : await game.Presence(roomId, UserId, true);
+        if (!alreadyJoined)
+        {
+            logger.LogInformation("SignalR room reconnected. {TraceId} {RoomId} {MatchId} {UserId} {ConnectionId} {ConnectionState}",
+                TraceId, roomId, room.MatchId, UserId, Context.ConnectionId, "reconnected");
+            await Clients.Group(GetRoomGroupName(roomId)).SendAsync("PlayerJoinedRoom", new { roomId, userId = UserId });
+            await Clients.Group(GetRoomGroupName(roomId)).SendAsync("RoomStateChanged", room);
+        }
+        if (room.MatchId is Guid matchId)
+        {
+            var state = await game.MatchSnapshot(matchId, UserId);
+            await Clients.Caller.SendAsync("Reconnected", state);
+            if (!alreadyJoined)
+            {
+                await Clients.Group(GetRoomGroupName(roomId)).SendAsync("PlayerReconnected", new { roomId, matchId, playerId = UserId });
+                await Clients.Group(GetRoomGroupName(roomId)).SendAsync(
+                    "MatchChanged", await game.MatchStateSnapshot(matchId, UserId));
+            }
+        }
     }
     public async Task LeaveRoom(Guid roomId)
     {
@@ -61,7 +109,18 @@ public class GameHub(IRoomAuthorizationService auth, GameService game, LiveConne
         {
             calls.End(roomId, UserId);
             await Clients.Group(GetRoomGroupName(roomId)).SendAsync("CallEnded");
-            try { await Clients.Group(GetRoomGroupName(roomId)).SendAsync("RoomStateChanged", await game.Presence(roomId, UserId, false)); }
+            try
+            {
+                var room = await game.Presence(roomId, UserId, false);
+                await Clients.Group(GetRoomGroupName(roomId)).SendAsync("RoomStateChanged", room);
+                if (room.MatchId is Guid matchId)
+                {
+                    await Clients.Group(GetRoomGroupName(roomId)).SendAsync(
+                        "PlayerDisconnected", await game.DisconnectionSnapshot(matchId, UserId));
+                    await Clients.Group(GetRoomGroupName(roomId)).SendAsync(
+                        "MatchChanged", await game.MatchStateSnapshot(matchId, UserId));
+                }
+            }
             catch (GameFault) { }
         }
     }
@@ -87,6 +146,33 @@ public class GameHub(IRoomAuthorizationService auth, GameService game, LiveConne
         await Clients.Group(GetRoomGroupName(roomId)).SendAsync("RoomStateChanged", room);
         await Clients.Group(LobbyGroupName).SendAsync("LobbyChanged");
     }
+    public Task<object> Surrender(Guid matchId, bool confirmed) =>
+        PublishMatchAsMember(matchId, () => game.Surrender(matchId, UserId, confirmed));
+
+    public Task<object> OfferDraw(Guid matchId) =>
+        PublishMatchAsMember(matchId, () => game.OfferDraw(matchId, UserId));
+
+    public Task<object> AcceptDraw(Guid matchId, Guid offerId) =>
+        PublishMatchAsMember(matchId, () => game.AcceptDraw(matchId, UserId, offerId));
+
+    public Task<object> RejectDraw(Guid matchId, Guid offerId) =>
+        PublishMatchAsMember(matchId, () => game.RejectDraw(matchId, UserId, offerId));
+
+    private async Task<object> PublishMatchAsMember(Guid matchId, Func<Task<object>> action)
+    {
+        var roomId = await HubRun(() => game.MatchRoomId(matchId, UserId));
+        await RequireMember(roomId);
+        return await PublishMatch(matchId, action);
+    }
+
+    private async Task<object> PublishMatch(Guid matchId, Func<Task<object>> action)
+    {
+        var state = await HubRun(action);
+        var roomId = await HubRun(() => game.MatchRoomId(matchId, UserId));
+        await Clients.Group(GetRoomGroupName(roomId)).SendAsync("MatchChanged", state);
+        return state;
+    }
+
     public async Task Signal(Guid roomId, SignalInput signal)
     {
         await RequireMember(roomId);

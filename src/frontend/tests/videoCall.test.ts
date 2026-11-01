@@ -48,4 +48,9 @@ describe('Video call lifecycle', () => {
       for (const scale of [.5,1,2]) expect((point.x*scale-40*scale)/(50*scale)).toBe(col)
     }
   })
+  it('converts the black-facing top-left cell to canonical board coordinates', () => {
+    const canonical = displayCell(0, 0, true)
+    expect(canonical).toEqual({ col: 8, row: 9 })
+    expect(boardPoint(canonical.col, canonical.row, true)).toEqual({ x: 40, y: 40 })
+  })
 })

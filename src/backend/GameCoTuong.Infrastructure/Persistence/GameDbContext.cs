@@ -51,6 +51,7 @@ public class GameDbContext : DbContext
             entity.Property(e => e.Name).HasMaxLength(80).IsRequired();
             entity.Property(e => e.Status).HasMaxLength(20).HasDefaultValue("waiting");
             entity.Property(e => e.Version).HasDefaultValue(1L);
+            entity.Property(e => e.Version).IsConcurrencyToken();
             entity.Property(e => e.InitialMinutes).HasDefaultValue(15);
             entity.Property(e => e.IncrementSeconds).HasDefaultValue(10);
             entity.Property(e => e.LastActivityAt).HasDefaultValueSql("SYSDATETIMEOFFSET()");
@@ -102,6 +103,7 @@ public class GameDbContext : DbContext
             entity.Property(e => e.RuleSetVersion).HasMaxLength(50).HasDefaultValue("gct-core-1");
             entity.Property(e => e.Status).HasMaxLength(20).HasDefaultValue("playing");
             entity.Property(e => e.Version).HasDefaultValue(1L);
+            entity.Property(e => e.Version).IsConcurrencyToken();
             entity.Property(e => e.MoveNumber).HasDefaultValue(0);
             entity.Property(e => e.SideToMove).HasMaxLength(10).HasDefaultValue("red");
             entity.Property(e => e.InitialBoardJson).IsRequired();
@@ -113,6 +115,8 @@ public class GameDbContext : DbContext
             entity.Property(e => e.Winner).HasMaxLength(10);
             entity.Property(e => e.ResultReason).HasMaxLength(30);
             entity.Property(e => e.StartedAt).HasDefaultValueSql("SYSDATETIMEOFFSET()");
+
+            entity.HasIndex(e => e.RoomId).IsUnique().HasFilter("[Status] IN ('playing', 'paused')");
 
             entity.HasOne(e => e.Room)
                 .WithMany(r => r.Matches)

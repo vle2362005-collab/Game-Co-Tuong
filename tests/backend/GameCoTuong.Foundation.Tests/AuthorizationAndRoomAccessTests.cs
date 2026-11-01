@@ -910,7 +910,8 @@ public sealed class AuthorizationAndRoomAccessTests : IClassFixture<WebApplicati
         var roomAuthService = scope.ServiceProvider.GetRequiredService<IRoomAuthorizationService>();
 
         // 1. Member joins -> success
-        var memberHub = new GameHub(roomAuthService, scope.ServiceProvider.GetRequiredService<GameCoTuong.Infrastructure.Game.GameService>(), new LiveConnections(), new VideoCalls());
+        var live = new LiveConnections();
+        var memberHub = new GameHub(roomAuthService, scope.ServiceProvider.GetRequiredService<GameCoTuong.Infrastructure.Game.GameService>(), live, new VideoCalls());
         var memberGroups = new TestGroupManager();
         var memberClients = new TestHubCallerClients();
         var memberPrincipal = new ClaimsPrincipal(new ClaimsIdentity(
@@ -926,6 +927,17 @@ public sealed class AuthorizationAndRoomAccessTests : IClassFixture<WebApplicati
         Assert.Contains(memberGroups.AddedGroups, g => g.GroupName == expectedGroup);
         Assert.True(memberClients.GroupProxies.ContainsKey(expectedGroup));
         Assert.Contains(memberClients.GroupProxies[expectedGroup].Invocations, inv => inv.Method == "PlayerJoinedRoom");
+        long roomVersionAfterFirstJoin;
+        using (var db = CreateDbContext())
+            roomVersionAfterFirstJoin = (await db.Rooms.SingleAsync(r => r.Id == roomId)).Version;
+
+        await memberHub.JoinRoom(roomId);
+
+        Assert.Single(memberClients.GroupProxies[expectedGroup].Invocations, inv => inv.Method == "PlayerJoinedRoom");
+        Assert.Single(memberClients.GroupProxies[expectedGroup].Invocations, inv => inv.Method == "RoomStateChanged");
+        Assert.True(live.IsInRoom(memberHub.Context.ConnectionId, memberUser.Id, roomId));
+        using (var db = CreateDbContext())
+            Assert.Equal(roomVersionAfterFirstJoin, (await db.Rooms.SingleAsync(r => r.Id == roomId)).Version);
 
         // 2. Outsider joins -> HubException FORBIDDEN
         var outHub = new GameHub(roomAuthService, scope.ServiceProvider.GetRequiredService<GameCoTuong.Infrastructure.Game.GameService>(), new LiveConnections(), new VideoCalls());

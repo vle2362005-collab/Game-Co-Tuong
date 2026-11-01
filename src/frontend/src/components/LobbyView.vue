@@ -22,7 +22,7 @@ function joinCode(value: string) { return act(() => gameApi.join(value.trim())) 
 onMounted(async () => {
   await load()
   disposers.push(auth.signalR.on('LobbyChanged', () => { void load() }))
-  disposers.push(auth.signalR.on('Reconnected', () => { void auth.signalR.invoke('JoinLobby'); void load() }))
+  disposers.push(auth.signalR.on('TransportReconnected', () => { void auth.signalR.invoke('JoinLobby'); void load() }))
   if (await auth.signalR.connect()) await auth.signalR.invoke('JoinLobby')
   else error.value = 'Chưa kết nối trực tuyến. Nhấn tải lại để thử lại.'
 })

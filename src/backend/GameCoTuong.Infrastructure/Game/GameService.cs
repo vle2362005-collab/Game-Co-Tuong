@@ -10,14 +10,18 @@ using GameCoTuong.Engine.Rules;
 using GameCoTuong.Engine.Serialization;
 using GameCoTuong.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 
 namespace GameCoTuong.Infrastructure.Game;
 
-// Single API process for this student demo. Serializable transactions + database indexes
-// protect seats and move sequence. Scale-out needs a distributed lock/presence store.
-public sealed class GameService(GameDbContext db)
+// Serialize writes in-process; concurrency tokens and database indexes protect persisted state across processes.
+public sealed class GameService(GameDbContext db, ILogger<GameService> logger)
 {
+    public GameService(GameDbContext db) : this(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<GameService>.Instance) { }
+
     public static readonly SemaphoreSlim WriteGate = new(1, 1);
+    public static readonly TimeSpan DrawOfferDuration = TimeSpan.FromSeconds(30);
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     public async Task<T> Write<T>(Func<Task<T>> action)
@@ -30,6 +34,10 @@ public sealed class GameService(GameDbContext db)
             await db.SaveChangesAsync();
             await transaction.CommitAsync();
             return result;
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            throw new GameFault("STATE_CONFLICT", "Trạng thái đã được thay đổi bởi thao tác khác. Hãy tải lại và thử lại.", 409);
         }
         finally { WriteGate.Release(); }
     }
@@ -83,10 +91,337 @@ public sealed class GameService(GameDbContext db)
     public Task<RoomView> Presence(Guid roomId, Guid userId, bool connected) => Write(async () =>
     {
         var room = await LoadRoom(roomId); var member = Member(room, userId);
-        member.IsConnected = connected;
-        if (!connected) foreach (var m in room.Memberships) m.IsReady = false;
+        if (connected && room.CurrentMatchId is Guid matchId)
+        {
+            var match = await LoadRecoveryMatch(matchId);
+            if (match.Status == "paused" && match.RecoveryReason is "serverRestart" or "disconnect")
+                await RestoreRecovery(match, userId);
+            else
+                member.IsConnected = true;
+        }
+        else if (connected) member.IsConnected = true;
+        if (!connected)
+        {
+            foreach (var m in room.Memberships) m.IsReady = false;
+            if (room.CurrentMatchId is Guid disconnectedMatchId)
+            {
+                var match = await LoadRecoveryMatch(disconnectedMatchId);
+                if (match.Status == "playing")
+                    PauseForDisconnect(match, member, DateTimeOffset.UtcNow);
+                else if (match.Status == "paused" && match.RecoveryReason is "serverRestart" or "disconnect")
+                    SetRecoveryDeadline(match, member, DateTimeOffset.UtcNow);
+            }
+            member.IsConnected = false;
+        }
         room.Version++; return View(room);
     });
+
+    public Task<int> RecoverAfterRestart() => Write(async () =>
+    {
+        var matches = await db.Matches
+            .Include(m => m.Players)
+            .Include(m => m.Room).ThenInclude(r => r!.Memberships)
+            .Where(m => m.Status == "playing" || (m.Status == "paused" && (m.RecoveryReason == "serverRestart" || m.RecoveryReason == "disconnect")))
+            .ToListAsync();
+        var now = DateTimeOffset.UtcNow;
+
+        foreach (var match in matches)
+        {
+            var wasWaitingForDisconnect = match.Status == "paused" && match.RecoveryReason == "disconnect";
+            match.Status = "paused";
+            if (!wasWaitingForDisconnect) match.RecoveryReason = "serverRestart";
+            match.TurnStartedAt = null;
+            match.DrawOfferId = null;
+            match.DrawOfferedBy = null;
+            match.DrawCreatedAt = null;
+            match.DrawExpiresAt = null;
+            match.Version++;
+            match.Room!.Version++;
+
+            foreach (var player in match.Players)
+            {
+                var member = match.Room!.Memberships.Single(m => m.UserId == player.UserId && m.LeftAt is null);
+                if (member.IsConnected)
+                    SetRecoveryDeadline(match, member, now, resetDeadline: true);
+                else
+                    SetRecoveryDeadline(match, member, now);
+                member.IsConnected = false;
+                member.IsReady = false;
+            }
+        }
+
+        return matches.Count;
+    });
+
+    public Task<object> Reconnect(Guid id, Guid userId) => Write(async () =>
+    {
+        var match = await LoadRecoveryMatch(id);
+        if (!match.Players.Any(p => p.UserId == userId))
+            throw new GameFault("NOT_MATCH_PLAYER", "Bạn không tham gia trận này.", 403);
+        if (match.Status == "playing" || match.Status == "cancelled" || match.Status == "finished")
+            return await MatchView(match, userId);
+        if (match.Status != "paused" || match.RecoveryReason is not ("serverRestart" or "disconnect"))
+            throw new GameFault("MATCH_NOT_RECOVERABLE", "Trận không chờ khôi phục kết nối.");
+
+        await RestoreRecovery(match, userId);
+        return await MatchView(match, userId);
+    });
+
+    public Task<int> ExpireRecoveries() => Write(async () =>
+    {
+        var matches = await db.Matches
+            .Include(m => m.Players)
+            .Include(m => m.Room)
+            .Where(m => m.Status == "paused" && (m.RecoveryReason == "serverRestart" || m.RecoveryReason == "disconnect"))
+            .ToListAsync();
+        var now = DateTimeOffset.UtcNow;
+        var expired = 0;
+        foreach (var match in matches)
+        {
+            if (match.Room is null) throw new InvalidOperationException($"Match {match.Id} has no room.");
+            var memberships = await db.RoomMemberships.Where(m => m.RoomId == match.RoomId && m.LeftAt == null).ToListAsync();
+            if (match.RecoveryReason == "disconnect")
+            {
+                var previousStatus = match.Status;
+                await ProcessExpiredDisconnects(match, memberships, now);
+                if (previousStatus != match.Status && match.Status is "finished" or "cancelled")
+                {
+                    logger.LogWarning("Disconnected match recovery timed out. {RoomId} {MatchId} {ErrorCode} {StatusCode}",
+                        match.RoomId, match.Id, "DISCONNECT_RECOVERY_TIMEOUT", StatusCodes.Status408RequestTimeout);
+                    expired++;
+                }
+            }
+            else if (HasExpiredRecovery(match, memberships, now))
+            {
+                await CancelAfterRestart(match);
+                logger.LogWarning("Match recovery timed out. {RoomId} {MatchId} {ErrorCode} {StatusCode}",
+                    match.RoomId, match.Id, "MATCH_RECOVERY_TIMEOUT", StatusCodes.Status408RequestTimeout);
+                expired++;
+            }
+        }
+        return expired;
+    });
+
+    public Task<IReadOnlyList<(Guid MatchId, Guid RoomId)>> ExpireDrawOffers() =>
+        Write<IReadOnlyList<(Guid MatchId, Guid RoomId)>>(async () =>
+    {
+        var matches = await db.Matches
+            .Where(m => m.Status == "playing" &&
+                (m.DrawOfferId != null || m.DrawOfferedBy != null || m.DrawCreatedAt != null || m.DrawExpiresAt != null))
+            .ToListAsync();
+        var now = DateTimeOffset.UtcNow;
+        var expired = new List<(Guid MatchId, Guid RoomId)>();
+        foreach (var match in matches)
+        {
+            if (ExpireDrawOfferIfNeeded(match, now))
+                expired.Add((match.Id, match.RoomId));
+        }
+        return expired;
+    });
+
+    private static bool ExpireDrawOfferIfNeeded(Match match, DateTimeOffset now)
+    {
+        if (match.DrawOfferId is not null &&
+            match.DrawOfferedBy is not null &&
+            match.DrawCreatedAt is not null &&
+            match.DrawExpiresAt is DateTimeOffset expiresAt &&
+            now < expiresAt)
+            return false;
+
+        if (match.DrawOfferId is null &&
+            match.DrawOfferedBy is null &&
+            match.DrawCreatedAt is null &&
+            match.DrawExpiresAt is null)
+            return false;
+
+        ClearDrawOffer(match);
+        match.Version++;
+        return true;
+    }
+
+    private static void ClearDrawOffer(Match match)
+    {
+        match.DrawOfferId = null;
+        match.DrawOfferedBy = null;
+        match.DrawCreatedAt = null;
+        match.DrawExpiresAt = null;
+    }
+
+    private async Task<Match> LoadRecoveryMatch(Guid id) =>
+        await db.Matches.Include(m => m.Players).Include(m => m.Room).ThenInclude(r => r!.Memberships)
+            .SingleOrDefaultAsync(m => m.Id == id)
+        ?? throw new GameFault("MATCH_NOT_FOUND", "Không tìm thấy trận.", 404);
+
+    private static void SetRecoveryDeadline(Match match, RoomMembership member, DateTimeOffset now, bool resetDeadline = false)
+    {
+        var red = member.Side == "red";
+        var remainingMs = red ? match.RedRecoveryRemainingMs : match.BlackRecoveryRemainingMs;
+        var existingDeadline = red ? match.RedDeadlineAt : match.BlackDeadlineAt;
+        var deadline = resetDeadline
+            ? now.AddMilliseconds(Math.Max(0, remainingMs))
+            : existingDeadline ?? member.ReconnectDeadlineAt ?? now.AddMilliseconds(Math.Max(0, remainingMs));
+
+        member.ReconnectDeadlineAt = deadline;
+        if (red)
+        {
+            if (resetDeadline) match.RedDisconnectedAt = now;
+            else match.RedDisconnectedAt ??= now;
+            match.RedDeadlineAt = deadline;
+        }
+        else
+        {
+            if (resetDeadline) match.BlackDisconnectedAt = now;
+            else match.BlackDisconnectedAt ??= now;
+            match.BlackDeadlineAt = deadline;
+        }
+    }
+
+    private static void PauseForDisconnect(Match match, RoomMembership member, DateTimeOffset now)
+    {
+        match.Status = "paused";
+        match.RecoveryReason = "disconnect";
+        match.TurnStartedAt = null;
+        match.DrawOfferId = null;
+        match.DrawOfferedBy = null;
+        match.DrawCreatedAt = null;
+        match.DrawExpiresAt = null;
+        SetRecoveryDeadline(match, member, now);
+        match.Version++;
+        if (match.Room is not null) match.Room.Version++;
+    }
+
+    private async Task RestoreRecovery(Match match, Guid userId)
+    {
+        var room = match.Room ?? throw new InvalidOperationException($"Match {match.Id} has no room.");
+        var memberships = room.Memberships.Where(m => m.LeftAt is null).ToList();
+        var now = DateTimeOffset.UtcNow;
+        var player = match.Players.Single(p => p.UserId == userId);
+        var member = memberships.Single(m => m.UserId == userId);
+        if (member.IsConnected) return;
+
+        if (match.RecoveryReason == "serverRestart" && HasExpiredRecovery(match, memberships, now))
+        {
+            await CancelAfterRestart(match);
+            return;
+        }
+
+        var deadline = player.Side == "red" ? match.RedDeadlineAt : match.BlackDeadlineAt;
+        if (deadline is null || now >= deadline.Value)
+        {
+            if (match.RecoveryReason == "serverRestart")
+                await CancelAfterRestart(match);
+            else
+                await ProcessExpiredDisconnects(match, memberships, now);
+            return;
+        }
+
+        var disconnectedAt = player.Side == "red" ? match.RedDisconnectedAt : match.BlackDisconnectedAt;
+        var remainingMs = player.Side == "red" ? match.RedRecoveryRemainingMs : match.BlackRecoveryRemainingMs;
+        if (disconnectedAt is not null)
+        {
+            var elapsedMs = Math.Max(0, Math.Ceiling((now - disconnectedAt.Value).TotalMilliseconds));
+            remainingMs = Math.Max(0, remainingMs - (int)Math.Min(Math.Max(0, remainingMs), elapsedMs));
+        }
+
+        member.IsConnected = true;
+        member.ReconnectDeadlineAt = null;
+        if (player.Side == "red")
+        {
+            match.RedRecoveryRemainingMs = remainingMs;
+            match.RedDisconnectedAt = null;
+            match.RedDeadlineAt = null;
+        }
+        else
+        {
+            match.BlackRecoveryRemainingMs = remainingMs;
+            match.BlackDisconnectedAt = null;
+            match.BlackDeadlineAt = null;
+        }
+        match.Version++;
+        room.Version++;
+
+        if (match.Players.All(p => memberships.Single(m => m.UserId == p.UserId).IsConnected))
+        {
+            match.Status = "playing";
+            match.RecoveryReason = null;
+            match.TurnStartedAt = now;
+        }
+        else if (match.RecoveryReason == "disconnect")
+        {
+            await ProcessExpiredDisconnects(match, memberships, now);
+        }
+    }
+
+    private async Task ProcessExpiredDisconnects(Match match, IReadOnlyCollection<RoomMembership> memberships, DateTimeOffset now)
+    {
+        var expiredPlayers = match.Players
+            .Where(player =>
+            {
+                var member = memberships.Single(m => m.UserId == player.UserId);
+                var deadline = player.Side == "red" ? match.RedDeadlineAt : match.BlackDeadlineAt;
+                return !member.IsConnected && deadline is not null && now >= deadline.Value;
+            })
+            .OrderBy(player => player.Side == "red" ? match.RedDeadlineAt : match.BlackDeadlineAt)
+            .ToArray();
+
+        foreach (var expiredPlayer in expiredPlayers)
+        {
+            var opponent = match.Players.Single(player => player.UserId != expiredPlayer.UserId);
+            if (memberships.Single(m => m.UserId == opponent.UserId).IsConnected)
+            {
+                await Finish(match, opponent.Side, "disconnect-timeout");
+                return;
+            }
+        }
+
+        if (expiredPlayers.Length == match.Players.Count && match.Players.All(p => !memberships.Single(m => m.UserId == p.UserId).IsConnected))
+            await CancelAfterDisconnect(match);
+    }
+
+    private async Task CancelAfterDisconnect(Match match)
+    {
+        match.Status = "cancelled";
+        match.Winner = null;
+        match.ResultReason = "disconnect-timeout";
+        match.EndedAt = DateTimeOffset.UtcNow;
+        match.TurnStartedAt = null;
+        match.DrawOfferId = null;
+        match.DrawOfferedBy = null;
+        match.DrawCreatedAt = null;
+        match.DrawExpiresAt = null;
+        match.Version++;
+        var room = match.Room ?? await db.Rooms.SingleAsync(r => r.Id == match.RoomId);
+        room.Status = "finished";
+        room.Version++;
+    }
+
+    private static bool HasExpiredRecovery(Match match, IReadOnlyCollection<RoomMembership> memberships, DateTimeOffset now)
+    {
+        foreach (var player in match.Players)
+        {
+            var member = memberships.Single(m => m.UserId == player.UserId);
+            var deadline = player.Side == "red" ? match.RedDeadlineAt : match.BlackDeadlineAt;
+            if (!member.IsConnected && (deadline is null || now >= deadline.Value)) return true;
+        }
+        return false;
+    }
+
+    private async Task CancelAfterRestart(Match match)
+    {
+        match.Status = "cancelled";
+        match.Winner = null;
+        match.ResultReason = "serverRestart";
+        match.EndedAt = DateTimeOffset.UtcNow;
+        match.TurnStartedAt = null;
+        match.DrawOfferId = null;
+        match.DrawOfferedBy = null;
+        match.DrawCreatedAt = null;
+        match.DrawExpiresAt = null;
+        match.Version++;
+        var room = match.Room ?? await db.Rooms.SingleAsync(r => r.Id == match.RoomId);
+        room.Status = "finished";
+        room.Version++;
+    }
 
     public Task<RoomView> Create(Guid userId, CreateRoomInput input) => Write(() => Once(userId, input.RequestId, "create", input, async () =>
     {
@@ -166,33 +501,282 @@ public sealed class GameService(GameDbContext db)
 
     private async Task<Match> LoadMatch(Guid id, Guid userId)
     {
-        var match = await db.Matches.Include(m => m.Players).SingleOrDefaultAsync(m => m.Id == id)
+        var match = await db.Matches.Include(m => m.Players).ThenInclude(p => p.User)
+            .SingleOrDefaultAsync(m => m.Id == id)
             ?? throw new GameFault("MATCH_NOT_FOUND", "Không tìm thấy trận.", 404);
         if (!match.Players.Any(p => p.UserId == userId)) throw new GameFault("NOT_MATCH_PLAYER", "Bạn không tham gia trận này.", 403);
         return match;
     }
 
-    public async Task<object> MatchSnapshot(Guid id, Guid userId) => MatchView(await LoadMatch(id, userId));
-    private static object MatchView(Match match) => new
+    public async Task<object> MatchHistory(Guid userId, int page = 1, int pageSize = 20, string? outcome = null, string? mode = null)
     {
-        match.Id, match.RoomId, match.Status, match.Version, match.MoveNumber, match.SideToMove,
-        pieces = BoardSerializer.Deserialize(match.CurrentBoardJson).ToArray(), match.Winner, match.ResultReason,
-        check = XiangqiRules.IsInCheck(BoardSerializer.Deserialize(match.CurrentBoardJson), ParseSide(match.SideToMove)),
-        players = match.Players.Select(p => new { p.UserId, p.Side }), match.DrawOfferedBy
+        if (page < 1 || pageSize is < 1 or > 100 || (long)(page - 1) * pageSize > int.MaxValue)
+            throw new GameFault("VALIDATION_ERROR", "Thông tin phân trang không hợp lệ.", 400);
+
+        var normalizedOutcome = outcome?.Trim().ToLowerInvariant();
+        if (normalizedOutcome is "" or "all") normalizedOutcome = null;
+        if (normalizedOutcome is not null &&
+            normalizedOutcome is not ("win" or "loss" or "draw" or "cancelled" or "in-progress"))
+            throw new GameFault("VALIDATION_ERROR", "Bộ lọc kết quả không hợp lệ.", 400);
+
+        var normalizedMode = mode?.Trim().ToLowerInvariant();
+        if (normalizedMode is "" or "all") normalizedMode = null;
+        if (normalizedMode is not null && normalizedMode is not ("pvp" or "pve" or "ai"))
+            throw new GameFault("VALIDATION_ERROR", "Bộ lọc loại trận không hợp lệ.", 400);
+
+        IQueryable<Match> matches = db.Matches.AsNoTracking()
+            .Where(m => m.Players.Any(p => p.UserId == userId));
+
+        if (normalizedMode == "pvp")
+            matches = matches.Where(m => m.Mode.ToLower() == "pvp");
+        else if (normalizedMode is "pve" or "ai")
+            matches = matches.Where(m => m.Mode.ToLower() == "pve" || m.Mode.ToLower() == "ai");
+
+        if (normalizedOutcome is not null)
+        {
+            var cancelled = matches.Where(m =>
+                m.Status.ToLower() == "cancelled" || m.Status.ToLower() == "canceled" ||
+                m.Status.ToLower() == "cancellation" ||
+                m.ResultReason != null &&
+                (m.ResultReason.ToLower() == "cancelled" || m.ResultReason.ToLower() == "canceled" ||
+                 m.ResultReason.ToLower() == "cancellation"));
+            var terminal = matches.Where(m =>
+                m.Status.ToLower() == "finished" || m.Status.ToLower() == "completed" ||
+                m.Status.ToLower() == "ended" || m.Status.ToLower() == "cancelled" ||
+                m.Status.ToLower() == "canceled" || m.Status.ToLower() == "cancellation");
+
+            matches = normalizedOutcome switch
+            {
+                "cancelled" => cancelled,
+                "in-progress" => matches.Where(m => !terminal.Any(t => t.Id == m.Id)),
+                "draw" => matches.Where(m => m.Winner == null && terminal.Any(t => t.Id == m.Id) &&
+                                              !cancelled.Any(c => c.Id == m.Id)),
+                "win" => matches.Where(m => m.Winner != null &&
+                                              m.Players.Any(p => p.UserId == userId && p.Side == m.Winner) &&
+                                              terminal.Any(t => t.Id == m.Id) && !cancelled.Any(c => c.Id == m.Id)),
+                "loss" => matches.Where(m => m.Winner != null &&
+                                              m.Players.Any(p => p.UserId == userId && p.Side != m.Winner) &&
+                                              terminal.Any(t => t.Id == m.Id) && !cancelled.Any(c => c.Id == m.Id)),
+                _ => matches
+            };
+        }
+
+        var totalCount = await matches.CountAsync();
+        var orderedMatches = db.Database.IsSqlite()
+            ? matches.OrderByDescending(match => match.StartedAt.ToString())
+            : matches.OrderByDescending(match => match.StartedAt);
+        var items = await orderedMatches
+            .ThenByDescending(match => match.Id)
+            .Skip((int)((long)(page - 1) * pageSize))
+            .Take(pageSize)
+            .Include(match => match.Players).ThenInclude(player => player.User)
+            .ToListAsync();
+
+        return new
+        {
+            items = items.Select(match => MatchHistorySummary(match, userId)).ToArray(),
+            page,
+            pageSize,
+            totalCount,
+            totalPages = (int)Math.Ceiling(totalCount / (double)pageSize)
+        };
+    }
+
+    public async Task<object> MatchDetails(Guid id, Guid userId)
+    {
+        var match = await LoadMatch(id, userId);
+        var moves = await db.Moves.AsNoTracking().Where(m => m.MatchId == id).OrderBy(m => m.Ply)
+            .Select(m => new
+            {
+                m.Ply, m.RequestId, m.Side, m.PieceId, m.FromCol, m.FromRow, m.ToCol, m.ToRow,
+                m.CapturedPieceId, m.CreatedAt, m.BoardSnapshotJson
+            }).ToListAsync();
+
+        return new
+        {
+            match.Id, match.RoomId, match.Mode, match.Status,
+            outcome = GetOutcome(match, userId),
+            winner = match.Winner,
+            match.ResultReason,
+            reasonCode = GetResultReasonCode(match.ResultReason),
+            result = GetMatchResult(match),
+            playerSide = match.Players.Single(p => p.UserId == userId).Side,
+            opponent = GetOpponent(match, userId),
+            match.StartedAt, match.EndedAt,
+            durationSeconds = Math.Max(0, ((match.EndedAt ?? DateTimeOffset.UtcNow) - match.StartedAt).TotalSeconds),
+            match.RuleSetVersion, match.InitialBoardJson, match.CurrentBoardJson,
+            moves
+        };
+    }
+
+    private static object MatchHistorySummary(Match match, Guid userId)
+    {
+        return new
+        {
+            match.Id, match.RoomId, match.Mode, match.Status,
+            outcome = GetOutcome(match, userId),
+            winner = match.Winner,
+            match.ResultReason,
+            reasonCode = GetResultReasonCode(match.ResultReason),
+            result = GetMatchResult(match),
+            playerSide = match.Players.Single(p => p.UserId == userId).Side,
+            opponent = GetOpponent(match, userId),
+            match.StartedAt, match.EndedAt,
+            durationSeconds = Math.Max(0, ((match.EndedAt ?? DateTimeOffset.UtcNow) - match.StartedAt).TotalSeconds),
+            match.MoveNumber
+        };
+    }
+
+    private static string GetOutcome(Match match, Guid userId)
+    {
+        if (IsCancellation(match.Status) || IsCancellation(match.ResultReason)) return "cancelled";
+        if (!IsTerminalStatus(match.Status)) return "in-progress";
+        if (match.Winner is null) return "draw";
+        return match.Players.Single(p => p.UserId == userId).Side == match.Winner ? "win" : "loss";
+    }
+
+    private static bool IsTerminalStatus(string status) =>
+        status.Equals("finished", StringComparison.OrdinalIgnoreCase) ||
+        status.Equals("completed", StringComparison.OrdinalIgnoreCase) ||
+        status.Equals("ended", StringComparison.OrdinalIgnoreCase) ||
+        IsCancellation(status);
+
+    private static string? GetResultReasonCode(string? reason) => reason?.ToLowerInvariant() switch
+    {
+        "resignation" or "surrender" => "surrender",
+        "draw-agreement" => "draw-agreement",
+        "checkmate" => "checkmate",
+        "stalemate" => "stalemate",
+        "disconnect-timeout" or "timeout" => "timeout",
+        "serverrestart" or "server-restart" => "server-restart",
+        "cancelled" or "canceled" or "cancellation" => "cancellation",
+        null => null,
+        "" => "unknown",
+        _ => reason
     };
+
+    private static MatchResultView? GetMatchResult(Match match) =>
+        IsTerminalStatus(match.Status)
+            ? new MatchResultView(
+                match.Status,
+                match.Winner,
+                IsCancellation(match.Status) || IsCancellation(match.ResultReason)
+                    ? "cancelled"
+                    : match.Winner is null ? "draw" : $"{match.Winner}-win",
+                GetResultReasonCode(match.ResultReason) ?? "unknown",
+                match.ResultReason,
+                match.EndedAt)
+            : null;
+
+    private static bool IsCancellation(string? value) =>
+        string.Equals(value, "cancelled", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(value, "canceled", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(value, "cancellation", StringComparison.OrdinalIgnoreCase);
+
+    private static MatchOpponentView? GetOpponent(Match match, Guid userId)
+    {
+        var player = match.Players.Single(p => p.UserId == userId);
+        var opponent = match.Players.FirstOrDefault(p => p.UserId != userId);
+        if (match.Mode is "ai" or "pve")
+            return new(null, "Máy", opponent?.Side ?? (player.Side == "red" ? "black" : "red"));
+        if (opponent is not null)
+            return new(opponent.UserId, opponent.User?.DisplayName ?? "Kỳ thủ", opponent.Side);
+        return null;
+    }
+
+    private sealed record MatchOpponentView(Guid? UserId, string DisplayName, string Side);
+
+    public async Task<object> MatchSnapshot(Guid id, Guid userId) => await MatchView(await LoadMatch(id, userId));
+    public async Task<object> MatchStateSnapshot(Guid id, Guid userId) => await MatchView(await LoadMatch(id, userId));
+    public async Task<object> MatchStateSnapshot(Guid id)
+    {
+        var match = await db.Matches.Include(m => m.Players).ThenInclude(p => p.User)
+            .SingleOrDefaultAsync(m => m.Id == id)
+            ?? throw new GameFault("MATCH_NOT_FOUND", "Không tìm thấy trận.", 404);
+        return await MatchView(match);
+    }
+
+    public async Task<IReadOnlyList<LegalMove>> LegalMoves(Guid id, Guid userId, string pieceId)
+    {
+        if (string.IsNullOrWhiteSpace(pieceId))
+            throw new GameFault("VALIDATION_ERROR", "Thiếu mã quân cờ.", 400);
+
+        var match = await LoadMatch(id, userId);
+        if (match.Status != "playing") return Array.Empty<LegalMove>();
+
+        var sideToMove = ParseSide(match.SideToMove);
+        var board = BoardSerializer.Deserialize(match.CurrentBoardJson);
+        return XiangqiRules.Generate(board, sideToMove, pieceId);
+    }
+
+    public async Task<object> DisconnectionSnapshot(Guid id, Guid userId)
+    {
+        var match = await LoadMatch(id, userId);
+        var player = match.Players.Single(p => p.UserId == userId);
+        var deadline = player.Side == "red" ? match.RedDeadlineAt : match.BlackDeadlineAt;
+        var countdownMs = deadline is null ? 0 : Math.Max(0, (int)Math.Ceiling((deadline.Value - DateTimeOffset.UtcNow).TotalMilliseconds));
+        return new
+        {
+            playerId = userId,
+            player.Side,
+            matchId = match.Id,
+            status = match.Status == "paused" && match.RecoveryReason == "disconnect" ? "waiting_reconnect" : match.Status,
+            gracePeriodMs = countdownMs,
+            deadlineAt = deadline,
+            countdownMs,
+            match = await MatchView(match, userId)
+        };
+    }
+
+    private async Task<object> MatchView(Match match, Guid? userId = null)
+    {
+        var board = BoardSerializer.Deserialize(match.CurrentBoardJson);
+        var turn = ParseSide(match.SideToMove);
+        var now = DateTimeOffset.UtcNow;
+        var redCountdown = match.RedDeadlineAt is null ? 0 : Math.Max(0, (int)Math.Ceiling((match.RedDeadlineAt.Value - now).TotalMilliseconds));
+        var blackCountdown = match.BlackDeadlineAt is null ? 0 : Math.Max(0, (int)Math.Ceiling((match.BlackDeadlineAt.Value - now).TotalMilliseconds));
+        // The accepted move is still tracked before SaveChanges; GETs read the latest persisted move.
+        var last = db.Moves.Local.FirstOrDefault(m => m.MatchId == match.Id && m.Ply == match.MoveNumber)
+            ?? await db.Moves.AsNoTracking().Where(m => m.MatchId == match.Id).OrderByDescending(m => m.Ply).FirstOrDefaultAsync();
+        var isCheck = XiangqiRules.IsInCheck(board, turn);
+        Position? checkedKingPos = isCheck ? board.GetGeneral(turn).Position : null;
+        return new
+        {
+            match.Id, match.RoomId, match.Status,
+            recoveryState = match.Status == "paused" && match.RecoveryReason == "disconnect" ? "waiting_reconnect" : match.Status,
+            playerSide = userId is null ? null : match.Players.Single(p => p.UserId == userId).Side,
+            match.Version, match.MoveNumber, match.SideToMove,
+            pieces = board.ToArray(), match.Winner, match.ResultReason,
+            reasonCode = GetResultReasonCode(match.ResultReason), result = GetMatchResult(match), match.RecoveryReason,
+            match.RedRemainingMs, match.BlackRemainingMs,
+            match.RedRecoveryRemainingMs, match.RedDeadlineAt, redReconnectCountdownMs = redCountdown,
+            match.BlackRecoveryRemainingMs, match.BlackDeadlineAt, blackReconnectCountdownMs = blackCountdown,
+            check = isCheck,
+            isCheck,
+            checkedKingPos,
+            legalMoves = match.Status == "playing" ? XiangqiRules.Generate(board, turn) : Array.Empty<LegalMove>(),
+            lastMove = last is null ? null : new { last.RequestId, last.Ply, last.Side, last.PieceId,
+                last.FromCol, last.FromRow, last.ToCol, last.ToRow, last.CapturedPieceId },
+            players = match.Players.Select(p => new { p.UserId, p.Side }),
+            match.DrawOfferId, match.DrawOfferedBy, match.DrawCreatedAt, match.DrawExpiresAt
+        };
+    }
     private static Side ParseSide(string side) => side == "red" ? Side.Red : Side.Black;
+
+    public async Task<Guid> MatchRoomId(Guid id, Guid userId) => (await LoadMatch(id, userId)).RoomId;
 
     public Task<object> Move(Guid id, Guid userId, MoveInput input) => Write(async () =>
     {
         var match = await LoadMatch(id, userId);
         if (input.RequestId == Guid.Empty) throw new GameFault("VALIDATION_ERROR", "Thiếu mã nước.", 400);
+        if (string.IsNullOrWhiteSpace(input.PieceId)) throw new GameFault("VALIDATION_ERROR", "Thiếu mã quân cờ.", 400);
         var previous = await db.Moves.SingleOrDefaultAsync(m => m.MatchId == id && m.RequestId == input.RequestId);
         if (previous is not null)
         {
             var playerSide = match.Players.Single(p => p.UserId == userId).Side;
             if (previous.Side != playerSide || previous.PieceId != input.PieceId || previous.ToCol != input.ToCol || previous.ToRow != input.ToRow)
                 throw new GameFault("REQUEST_CONFLICT", "Mã nước đã được sử dụng.");
-            return MatchView(match);
+            return await MatchView(match);
         }
         if (match.Status != "playing") throw new GameFault("MATCH_NOT_PLAYING", "Trận không cho phép đi quân.");
         if (match.Version != input.ExpectedVersion) throw new GameFault("VERSION_CONFLICT", "Bàn cờ đã thay đổi, hãy tải lại.");
@@ -210,33 +794,122 @@ public sealed class GameService(GameDbContext db)
             BoardSnapshotJson = BoardSerializer.Serialize(next), CreatedAt = DateTimeOffset.UtcNow });
         match.CurrentBoardJson = BoardSerializer.Serialize(next);
         match.SideToMove = match.SideToMove == "red" ? "black" : "red";
-        match.DrawOfferedBy = null;
+        ClearDrawOffer(match);
         var result = XiangqiRules.Result(next, ParseSide(match.SideToMove));
         if (result.Finished) await Finish(match, result.Winner == Side.Red ? "red" : "black", result.Reason!);
-        return MatchView(match);
+        return await MatchView(match);
     });
 
     private async Task Finish(Match match, string? winner, string reason)
     {
-        if (match.Status == "finished") return;
+        if (IsTerminalStatus(match.Status)) return;
         match.Status = "finished"; match.Winner = winner; match.ResultReason = reason;
-        match.EndedAt = DateTimeOffset.UtcNow; match.Version++; match.DrawOfferedBy = null;
+        match.EndedAt = DateTimeOffset.UtcNow; match.Version++; ClearDrawOffer(match);
         var room = await LoadRoom(match.RoomId); room.Status = "finished"; room.Version++;
+    }
+
+    public Task<object> Surrender(Guid id, Guid userId, bool confirmed) => Write(async () =>
+    {
+        var match = await LoadMatch(id, userId);
+        if (!confirmed) throw new GameFault("CONFIRMATION_REQUIRED", "Cần xác nhận trước khi đầu hàng.", 400);
+        if (IsTerminalStatus(match.Status)) return await MatchView(match);
+        if (match.Status != "playing") throw new GameFault("MATCH_NOT_PLAYING", "Trận đang tạm dừng.");
+        var side = match.Players.Single(p => p.UserId == userId).Side;
+        await Finish(match, side == "red" ? "black" : "red", "resignation");
+        return await MatchView(match);
+    });
+
+    public Task<object> OfferDraw(Guid id, Guid userId) => Write(async () =>
+    {
+        var match = await LoadMatch(id, userId);
+        EnsureDrawNegotiationAllowed(match);
+        if (match.Status != "playing") throw new GameFault("MATCH_NOT_PLAYING", "Trận đang tạm dừng.");
+        var now = DateTimeOffset.UtcNow;
+        ExpireDrawOfferIfNeeded(match, now);
+        var side = match.Players.Single(p => p.UserId == userId).Side;
+        if (match.DrawOfferId is not null)
+        {
+            if (match.DrawOfferedBy == side) return await MatchView(match);
+            throw new GameFault("DRAW_OFFER_PENDING", "Đối thủ đã gửi đề nghị hòa; hãy phản hồi đề nghị đó.");
+        }
+
+        match.DrawOfferId = Guid.NewGuid();
+        match.DrawOfferedBy = side;
+        match.DrawCreatedAt = now;
+        match.DrawExpiresAt = now + DrawOfferDuration;
+        match.Version++;
+        return await MatchView(match);
+    });
+
+    public Task<object> AcceptDraw(Guid id, Guid userId, Guid offerId) => Write(async () =>
+    {
+        var match = await LoadMatch(id, userId);
+        EnsureDrawNegotiationAllowed(match);
+        if (match.Status != "playing") throw new GameFault("MATCH_NOT_PLAYING", "Trận đang tạm dừng.");
+        if (ExpireDrawOfferIfNeeded(match, DateTimeOffset.UtcNow)) return await MatchView(match);
+        if (match.DrawOfferId is null) throw new GameFault("DRAW_OFFER_NOT_FOUND", "Không có đề nghị hòa còn hiệu lực.");
+        if (offerId == Guid.Empty) throw new GameFault("VALIDATION_ERROR", "Thiếu mã đề nghị hòa.", 400);
+        if (match.DrawOfferId != offerId)
+            throw new GameFault("DRAW_OFFER_STALE", "Đề nghị hòa đã thay đổi hoặc hết hiệu lực.");
+
+        var side = match.Players.Single(p => p.UserId == userId).Side;
+        if (match.DrawOfferedBy == side)
+            throw new GameFault("DRAW_OFFER_NOT_YOURS", "Bạn không thể chấp nhận đề nghị hòa của chính mình.");
+
+        await Finish(match, null, "draw-agreement");
+        return await MatchView(match);
+    });
+
+    public Task<object> RejectDraw(Guid id, Guid userId, Guid offerId) => Write(async () =>
+    {
+        var match = await LoadMatch(id, userId);
+        EnsureDrawNegotiationAllowed(match);
+        if (match.Status != "playing") throw new GameFault("MATCH_NOT_PLAYING", "Trận đang tạm dừng.");
+        if (ExpireDrawOfferIfNeeded(match, DateTimeOffset.UtcNow)) return await MatchView(match);
+        if (match.DrawOfferId is null) throw new GameFault("DRAW_OFFER_NOT_FOUND", "Không có đề nghị hòa còn hiệu lực.");
+        if (offerId == Guid.Empty) throw new GameFault("VALIDATION_ERROR", "Thiếu mã đề nghị hòa.", 400);
+        if (match.DrawOfferId != offerId)
+            throw new GameFault("DRAW_OFFER_STALE", "Đề nghị hòa đã thay đổi hoặc hết hiệu lực.");
+
+        var side = match.Players.Single(p => p.UserId == userId).Side;
+        if (match.DrawOfferedBy == side)
+            throw new GameFault("DRAW_OFFER_NOT_YOURS", "Bạn không thể từ chối đề nghị hòa của chính mình.");
+
+        ClearDrawOffer(match);
+        match.Version++;
+        return await MatchView(match);
+    });
+
+    private static void EnsureDrawNegotiationAllowed(Match match)
+    {
+        if (match.Mode is "ai" or "pve")
+            throw new GameFault("DRAW_NOT_AVAILABLE", "Không thể thương lượng hòa trong trận đấu với máy.");
     }
 
     public Task<object> End(Guid id, Guid userId, bool draw) => Write(async () =>
     {
         var match = await LoadMatch(id, userId);
-        if (match.Status == "finished") return MatchView(match);
+        if (match.Status == "finished") return await MatchView(match);
         if (match.Status != "playing") throw new GameFault("MATCH_NOT_PLAYING", "Trận đang tạm dừng.");
         var side = match.Players.Single(p => p.UserId == userId).Side;
         if (draw)
         {
-            if (match.DrawOfferedBy is not null && match.DrawOfferedBy != side) await Finish(match, null, "draw-agreement");
-            else match.DrawOfferedBy = side;
+            EnsureDrawNegotiationAllowed(match);
+            ExpireDrawOfferIfNeeded(match, DateTimeOffset.UtcNow);
+            if (match.DrawOfferId is not null && match.DrawOfferedBy != side)
+                throw new GameFault("DRAW_OFFER_PENDING", "Đối thủ đã gửi đề nghị hòa; hãy phản hồi đề nghị đó.");
+            else if (match.DrawOfferId is null)
+            {
+                var now = DateTimeOffset.UtcNow;
+                match.DrawOfferId = Guid.NewGuid();
+                match.DrawOfferedBy = side;
+                match.DrawCreatedAt = now;
+                match.DrawExpiresAt = now + DrawOfferDuration;
+                match.Version++;
+            }
         }
         else await Finish(match, side == "red" ? "black" : "red", "resignation");
-        return MatchView(match);
+        return await MatchView(match);
     });
 
     public async Task<object> History(Guid id, Guid userId)

@@ -2,6 +2,7 @@ using GameCoTuong.Api.Configuration;
 using GameCoTuong.Api.Endpoints;
 using GameCoTuong.Api.Hubs;
 using GameCoTuong.Api.Middleware;
+using GameCoTuong.Application.Game;
 using GameCoTuong.Infrastructure;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
@@ -34,10 +35,16 @@ builder.Services.AddProblemDetails();
 builder.Services.AddHealthChecks();
 builder.Services.AddSingleton<LiveConnections>();
 builder.Services.AddSingleton<VideoCalls>();
+builder.Services.AddScoped<IDrawOfferExpirationNotifier, MatchEventNotifier>();
 builder.Services.AddSignalR(options => options.AddFilter<SessionHubFilter>());
 builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddHostedService<GameCoTuong.Infrastructure.Game.MatchRecoveryHostedService>();
 
 var app = builder.Build();
+app.Lifetime.ApplicationStarted.Register(() =>
+    app.Logger.LogInformation("Game API service state changed. {Service} {ServiceState}", "game-co-tuong-api", "running"));
+app.Lifetime.ApplicationStopping.Register(() =>
+    app.Logger.LogInformation("Game API service state changed. {Service} {ServiceState}", "game-co-tuong-api", "stopping"));
 if (app.Configuration["Database:Provider"] == "Sqlite")
 {
     using var scope = app.Services.CreateScope();
@@ -46,7 +53,8 @@ if (app.Configuration["Database:Provider"] == "Sqlite")
     finally { GameCoTuong.Infrastructure.Game.GameService.WriteGate.Release(); }
 }
 _ = app.Services.GetRequiredService<IOptions<BrowserClientOptions>>().Value;
-app.UseExceptionHandler();
+app.UseMiddleware<SafeExceptionMiddleware>();
+app.UseMiddleware<RequestLoggingMiddleware>();
 app.UseCors("Frontend");
 app.UseMiddleware<JwtAuthenticationMiddleware>();
 

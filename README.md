@@ -68,3 +68,5 @@ PR vào `develop`/`main` được [GCT CI](.github/workflows/ci.yml) build và k
 ## Bản tích hợp Sprint 3
 
 Xem [hướng dẫn chạy, video call và đối chiếu các thẻ](docs/sprint3.md).
+
+S4 đến GCT-82: [đối chiếu 9 thẻ và kết quả kiểm thử](docs/sprint4-core.md).

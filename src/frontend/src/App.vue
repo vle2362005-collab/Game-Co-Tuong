@@ -66,6 +66,7 @@ watch(
       <router-view v-slot="{ Component }">
         <component
           :is="Component"
+          :key="route.fullPath"
           :user="auth.user.value"
           :session-expired="auth.sessionExpired.value"
           :is-submitting="auth.isSubmitting.value"
@@ -88,7 +89,7 @@ watch(
 
     <footer>
       <span>Vue 3 · Vue Router 4 · TypeScript · ASP.NET Core</span>
-      <span>Game Cờ Tướng · Sprint 3</span>
+      <span>Game Cờ Tướng Trực Tuyến</span>
     </footer>
   </main>
 </template>
