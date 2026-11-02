@@ -5,6 +5,7 @@ using GameCoTuong.Application.Game;
 using GameCoTuong.Domain.Entities;
 using GameCoTuong.Domain.Enums;
 using GameCoTuong.Domain.ValueObjects;
+using GameCoTuong.Engine.AI;
 using GameCoTuong.Engine.Model;
 using GameCoTuong.Engine.Rules;
 using GameCoTuong.Engine.Serialization;
@@ -65,7 +66,9 @@ public sealed class GameService(GameDbContext db, ILogger<GameService> logger)
 
     public async Task<IReadOnlyList<RoomView>> List()
     {
-        var rooms = await db.Rooms.AsNoTracking().Where(r => r.Status != "closed")
+        var rooms = await db.Rooms.AsNoTracking().Where(r => r.Status != "closed" &&
+                (!r.CurrentMatchId.HasValue || !db.Matches.Any(m =>
+                    m.Id == r.CurrentMatchId && (m.Mode == "pve" || m.Mode == "ai"))))
             .Include(r => r.Memberships).ThenInclude(m => m.User).ToListAsync();
         return rooms.OrderByDescending(r => r.CreatedAt).Select(View).ToArray();
     }
@@ -366,6 +369,12 @@ public sealed class GameService(GameDbContext db, ILogger<GameService> logger)
 
         foreach (var expiredPlayer in expiredPlayers)
         {
+            if (match.Mode is "pve" or "ai")
+            {
+                await Finish(match, expiredPlayer.Side == "red" ? "black" : "red", "disconnect-timeout");
+                return;
+            }
+
             var opponent = match.Players.Single(player => player.UserId != expiredPlayer.UserId);
             if (memberships.Single(m => m.UserId == opponent.UserId).IsConnected)
             {
@@ -438,6 +447,65 @@ public sealed class GameService(GameDbContext db, ILogger<GameService> logger)
         db.Rooms.Add(room);
         return View(room);
     }));
+
+    public Task<object> CreateAiMatch(Guid userId, CreateAiMatchInput input) =>
+        Write(() => Once(userId, input.RequestId, "create-ai-match", input, async () =>
+        {
+            if (string.IsNullOrWhiteSpace(input.Difficulty))
+                throw new GameFault("VALIDATION_ERROR", "Hãy chọn mức khó easy, medium hoặc hard.", 400);
+            var difficulty = input.Difficulty.Trim().ToLowerInvariant();
+            if (difficulty is not ("easy" or "medium" or "hard"))
+                throw new GameFault("VALIDATION_ERROR", "Mức khó phải là easy, medium hoặc hard.", 400);
+            if (await db.RoomMemberships.AnyAsync(m => m.UserId == userId && m.LeftAt == null))
+                throw new GameFault("ALREADY_IN_ROOM", "Bạn đang ở một phòng khác.");
+
+            string code;
+            do { code = RandomNumberGenerator.GetInt32(100000, 1000000).ToString(); }
+            while (await db.Rooms.AnyAsync(r => r.Code == code && r.Status != "closed"));
+
+            var now = DateTimeOffset.UtcNow;
+            var board = BoardSerializer.Serialize(BoardInitializer.CreateInitialBoard());
+            var room = new Room
+            {
+                Id = Guid.NewGuid(),
+                Code = code,
+                Name = "Đấu với máy",
+                HostUserId = userId,
+                Status = "playing",
+                CreatedAt = now,
+                LastActivityAt = now
+            };
+            room.Memberships.Add(new RoomMembership
+            {
+                Id = Guid.NewGuid(),
+                UserId = userId,
+                Side = "red",
+                JoinedAt = now,
+                User = await db.Users.FindAsync(userId)
+            });
+            db.Rooms.Add(room);
+            await db.SaveChangesAsync();
+
+            var match = new Match
+            {
+                Id = Guid.NewGuid(),
+                RoomId = room.Id,
+                Mode = "pve",
+                AiDifficulty = difficulty,
+                InitialBoardJson = board,
+                CurrentBoardJson = board,
+                StartedAt = now,
+                TurnStartedAt = now,
+                RedRemainingMs = room.InitialMinutes * 60000,
+                BlackRemainingMs = room.InitialMinutes * 60000
+            };
+            match.Players.Add(new MatchPlayer { Id = Guid.NewGuid(), UserId = userId, Side = "red" });
+            db.Matches.Add(match);
+            await db.SaveChangesAsync();
+            room.CurrentMatchId = match.Id;
+            room.Version++;
+            return await MatchView(match, userId);
+        }));
 
     public Task<RoomView> Join(Guid userId, string code) => Write(async () =>
     {
@@ -594,7 +662,7 @@ public sealed class GameService(GameDbContext db, ILogger<GameService> logger)
 
         return new
         {
-            match.Id, match.RoomId, match.Mode, match.Status,
+            match.Id, match.RoomId, match.Mode, match.AiDifficulty, match.Status,
             outcome = GetOutcome(match, userId),
             winner = match.Winner,
             match.ResultReason,
@@ -613,7 +681,7 @@ public sealed class GameService(GameDbContext db, ILogger<GameService> logger)
     {
         return new
         {
-            match.Id, match.RoomId, match.Mode, match.Status,
+            match.Id, match.RoomId, match.Mode, match.AiDifficulty, match.Status,
             outcome = GetOutcome(match, userId),
             winner = match.Winner,
             match.ResultReason,
@@ -745,7 +813,7 @@ public sealed class GameService(GameDbContext db, ILogger<GameService> logger)
             match.Id, match.RoomId, match.Status,
             recoveryState = match.Status == "paused" && match.RecoveryReason == "disconnect" ? "waiting_reconnect" : match.Status,
             playerSide = userId is null ? null : match.Players.Single(p => p.UserId == userId).Side,
-            match.Version, match.MoveNumber, match.SideToMove,
+            match.Mode, match.AiDifficulty, match.Version, match.MoveNumber, match.SideToMove,
             pieces = board.ToArray(), match.Winner, match.ResultReason,
             reasonCode = GetResultReasonCode(match.ResultReason), result = GetMatchResult(match), match.RecoveryReason,
             match.RedRemainingMs, match.BlackRemainingMs,
@@ -783,22 +851,57 @@ public sealed class GameService(GameDbContext db, ILogger<GameService> logger)
         if (match.Players.Single(p => p.UserId == userId).Side != match.SideToMove)
             throw new GameFault("NOT_YOUR_TURN", "Chưa đến lượt của bạn.", 403);
         if (!Position.IsValid(input.ToCol, input.ToRow)) throw new GameFault("INVALID_MOVE", "Tọa độ ngoài bàn cờ.", 400);
-        var board = BoardSerializer.Deserialize(match.CurrentBoardJson);
         var move = new LegalMove(input.PieceId, new Position(input.ToCol, input.ToRow));
-        if (!XiangqiRules.IsLegal(board, ParseSide(match.SideToMove), move)) throw new GameFault("INVALID_MOVE", "Nước đi không hợp lệ.", 400);
-        var piece = board.GetPieceById(input.PieceId)!;
-        var next = board.ApplyMove(input.PieceId, move.To, out var captured);
-        db.Moves.Add(new Move { Id = Guid.NewGuid(), MatchId = id, RequestId = input.RequestId, Ply = ++match.MoveNumber,
+        var board = BoardSerializer.Deserialize(match.CurrentBoardJson);
+        if (!XiangqiRules.IsLegal(board, ParseSide(match.SideToMove), move))
+            throw new GameFault("INVALID_MOVE", "Nước đi không hợp lệ.", 400);
+        await ApplyMove(match, input.RequestId, move);
+
+        if (match.Status == "playing" && (match.Mode is "pve" or "ai") && match.SideToMove == "black")
+        {
+            var (depth, budget) = AiSearchParameters(match.AiDifficulty);
+            var aiBoard = BoardSerializer.Deserialize(match.CurrentBoardJson);
+            var aiMove = Minimax.FindBest(aiBoard, Side.Black, depth, budget);
+            if (aiMove is null)
+            {
+                var result = XiangqiRules.Result(aiBoard, Side.Black);
+                if (result.Finished)
+                    await Finish(match, result.Winner == Side.Red ? "red" : "black", result.Reason!);
+            }
+            else
+            {
+                await ApplyMove(match, Guid.NewGuid(), aiMove);
+            }
+        }
+        return await MatchView(match);
+    });
+
+    private async Task ApplyMove(Match match, Guid requestId, LegalMove move)
+    {
+        var board = BoardSerializer.Deserialize(match.CurrentBoardJson);
+        var side = ParseSide(match.SideToMove);
+        if (!XiangqiRules.IsLegal(board, side, move))
+            throw new GameFault("AI_MOVE_INVALID", "Bộ máy chọn một nước không hợp lệ.", 500);
+        var piece = board.GetPieceById(move.PieceId)!;
+        var next = board.ApplyMove(piece.Id, move.To, out var captured);
+        db.Moves.Add(new Move { Id = Guid.NewGuid(), MatchId = match.Id, RequestId = requestId, Ply = ++match.MoveNumber,
             MatchVersion = ++match.Version, Side = match.SideToMove, PieceId = piece.Id, FromCol = piece.Position.Col,
-            FromRow = piece.Position.Row, ToCol = input.ToCol, ToRow = input.ToRow, CapturedPieceId = captured?.Id,
+            FromRow = piece.Position.Row, ToCol = move.To.Col, ToRow = move.To.Row, CapturedPieceId = captured?.Id,
             BoardSnapshotJson = BoardSerializer.Serialize(next), CreatedAt = DateTimeOffset.UtcNow });
         match.CurrentBoardJson = BoardSerializer.Serialize(next);
         match.SideToMove = match.SideToMove == "red" ? "black" : "red";
         ClearDrawOffer(match);
         var result = XiangqiRules.Result(next, ParseSide(match.SideToMove));
         if (result.Finished) await Finish(match, result.Winner == Side.Red ? "red" : "black", result.Reason!);
-        return await MatchView(match);
-    });
+    }
+
+    private static (int Depth, TimeSpan Budget) AiSearchParameters(string difficulty) => difficulty switch
+    {
+        "easy" => (1, TimeSpan.FromMilliseconds(150)),
+        "medium" => (2, TimeSpan.FromMilliseconds(450)),
+        "hard" => (3, TimeSpan.FromMilliseconds(900)),
+        _ => throw new GameFault("INVALID_AI_DIFFICULTY", "Mức khó của trận không hợp lệ.", 500)
+    };
 
     private async Task Finish(Match match, string? winner, string reason)
     {

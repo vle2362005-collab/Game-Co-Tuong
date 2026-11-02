@@ -14,6 +14,8 @@ public static class MatchEndpoints
         foreach (var prefix in new[] { "/api/v1/matches", "/api/matches" })
         {
             var g = app.MapGroup(prefix);
+            g.MapPost("/ai", (CreateAiMatchInput input, HttpContext c, GameService s) =>
+                GameApi.Run(c, u => s.CreateAiMatch(u, input)));
             g.MapGet("", (HttpContext c, GameService s, int page = 1, int pageSize = 20, string? outcome = null, string? mode = null) =>
                 GameApi.Run(c, u => s.MatchHistory(u, page, pageSize, outcome, mode)));
             g.MapGet("/history", (HttpContext c, GameService s, int page = 1, int pageSize = 20, string? outcome = null, string? mode = null) =>

@@ -5,8 +5,10 @@ import { useAuth } from '../composables/useAuth'
 import { gameApi, type Room } from '../api/game'
 const auth = useAuth(), router = useRouter()
 const rooms = ref<Room[]>([]), name = ref('Phòng cờ của tôi'), code = ref(''), error = ref(''), busy = ref(false), loading = ref(true)
+const difficulty = ref<'easy' | 'medium' | 'hard'>('medium')
 const disposers: (() => void)[] = []
 let createRequest = crypto.randomUUID()
+let createAiRequest = crypto.randomUUID()
 async function load() {
   try { rooms.value = await gameApi.rooms() } catch (e) { error.value = String(e) } finally { loading.value = false }
 }
@@ -18,6 +20,16 @@ async function act(action: () => Promise<Room>) {
   finally { busy.value = false }
 }
 function createRoom() { return act(() => gameApi.create(name.value, createRequest)) }
+async function createAiMatch() {
+  if (busy.value) return
+  busy.value = true; error.value = ''
+  try {
+    const match = await gameApi.createAiMatch(difficulty.value, createAiRequest)
+    createAiRequest = crypto.randomUUID()
+    await router.push(`/game/${match.id}`)
+  } catch (e) { error.value = e instanceof Error ? e.message : String(e) }
+  finally { busy.value = false }
+}
 function joinCode(value: string) { return act(() => gameApi.join(value.trim())) }
 onMounted(async () => {
   await load()
@@ -38,6 +50,14 @@ onUnmounted(() => { disposers.forEach(fn => fn()); void auth.signalR.invoke('Lea
     <form class="actions" @submit.prevent="joinCode(code)">
       <label>Mã phòng <input v-model="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required></label><button :disabled="busy">Tham gia</button>
     </form>
+    <form class="actions" @submit.prevent="createAiMatch">
+      <label>Mức khó
+        <select v-model="difficulty">
+          <option value="easy">Dễ</option><option value="medium">Vừa</option><option value="hard">Khó</option>
+        </select>
+      </label>
+      <button :disabled="busy">Chơi với máy (không cần đối thủ trực tuyến)</button>
+    </form>
     <button :disabled="busy" @click="load">Tải lại</button>
     <p v-if="loading">Đang tải phòng…</p><p v-else-if="!rooms.length">Chưa có phòng. Hãy tạo phòng đầu tiên.</p>
     <ul class="room-list"><li v-for="room in rooms" :key="room.id"><div><strong>{{ room.name }}</strong><br>Mã {{ room.code }} · {{ room.members.length }}/2 · {{ room.status }}</div>
@@ -47,5 +67,5 @@ onUnmounted(() => { disposers.forEach(fn => fn()); void auth.signalR.invoke('Lea
   </section>
 </template>
 <style scoped>
-.lobby{max-width:760px;width:100%;margin:auto}.actions{display:flex;gap:12px;align-items:end;margin:18px 0}label{display:grid;gap:6px;flex:1}input{padding:12px;border:1px solid #bccbc3;border-radius:8px;font:inherit}.room-list{padding:0;list-style:none}.room-list li{display:flex;gap:12px;align-items:center;padding:18px;border:1px solid #d1ddd5;border-radius:12px;margin:12px 0}.room-list li div{flex:1}.error{color:#a12525}button{padding:11px 18px;cursor:pointer}button:disabled{opacity:.5;cursor:default}
+.lobby{max-width:760px;width:100%;margin:auto}.actions{display:flex;gap:12px;align-items:end;margin:18px 0}label{display:grid;gap:6px;flex:1}input,select{padding:12px;border:1px solid #bccbc3;border-radius:8px;font:inherit}.room-list{padding:0;list-style:none}.room-list li{display:flex;gap:12px;align-items:center;padding:18px;border:1px solid #d1ddd5;border-radius:12px;margin:12px 0}.room-list li div{flex:1}.error{color:#a12525}button{padding:11px 18px;cursor:pointer}button:disabled{opacity:.5;cursor:default}
 </style>

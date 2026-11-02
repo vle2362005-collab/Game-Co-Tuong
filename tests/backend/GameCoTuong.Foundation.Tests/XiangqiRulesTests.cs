@@ -106,4 +106,11 @@ public sealed class XiangqiRulesTests
         var result = XiangqiRules.Result(board.ApplyMove(move.PieceId,move.To,out _),Side.Black);
         Assert.True(result.Finished); Assert.Equal(Side.Red,result.Winner);
     }
+    [Fact] public void Minimax_returns_a_legal_move_when_its_search_budget_expires()
+    {
+        var board = BoardInitializer.CreateInitialBoard();
+        var move = Minimax.FindBest(board,Side.Red,3,TimeSpan.FromTicks(1));
+        Assert.NotNull(move);
+        Assert.True(XiangqiRules.IsLegal(board,Side.Red,move));
+    }
 }
