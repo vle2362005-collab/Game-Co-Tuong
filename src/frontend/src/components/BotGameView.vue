@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuth } from '../composables/useAuth'
 import { pveApi, type PveMatch, type Difficulty } from '../api/pve'
@@ -145,7 +145,6 @@ function scheduleBotTimeout() {
     botTimeout = setTimeout(async () => { if (botThinking.value) await refresh() }, 12000)
   }
 }
-import { watch } from 'vue'
 watch(botThinking, val => { if (val) scheduleBotTimeout(); else { if (botTimeout) clearTimeout(botTimeout) } })
 
 onMounted(async () => {

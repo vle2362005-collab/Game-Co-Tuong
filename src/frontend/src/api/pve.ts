@@ -1,5 +1,5 @@
 import { apiClient } from './client'
-import type { Match, LegalMove, ConfirmedMove, Piece, MatchResult } from './game'
+import type { LegalMove, ConfirmedMove, Piece, MatchResult } from './game'
 
 export interface PveMatch {
   id: string
