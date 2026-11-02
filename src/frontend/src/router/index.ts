@@ -11,6 +11,7 @@ import LobbyView from '../components/LobbyView.vue'
 import RoomView from '../components/RoomView.vue'
 import GameView from '../components/GameView.vue'
 import HistoryView from '../components/HistoryView.vue'
+import ReplayView from '../components/ReplayView.vue'
 import { useAuth } from '../composables/useAuth'
 
 export const routes: RouteRecordRaw[] = [
@@ -58,6 +59,12 @@ export const routes: RouteRecordRaw[] = [
     name: 'history',
     component: HistoryView,
     meta: { requiresAuth: true, title: 'Lịch sử ván đấu' }
+  },
+  {
+    path: '/replay/:id',
+    name: 'replay',
+    component: ReplayView,
+    meta: { requiresAuth: true, title: 'Xem lại ván đấu' }
   },
   {
     path: '/',

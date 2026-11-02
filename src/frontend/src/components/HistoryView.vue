@@ -214,7 +214,7 @@ function modeText(item: MatchHistoryItem) {
             <span>{{ item.moveNumber }} nước</span> ·
             <span>{{ playedAt(item) }}</span>
           </p>
-          <button type="button" class="btn-review" @click="router.push(`/game/${item.id}`)">Xem lại ván</button>
+          <button v-if="item.outcome !== 'in-progress'" type="button" class="btn-review" @click="router.push(`/replay/${item.id}`)">Xem lại ván</button>
         </div>
       </div>
     </div>

@@ -90,6 +90,32 @@ describe('GCT-32: Cấu hình Vue Router và điều hướng màn hình', () =>
     expect(router.currentRoute.value.path).toBe('/history')
   })
 
+  it('mở màn hình replay được bảo vệ và giữ mã trận', async () => {
+    const router = createAppRouter({
+      history: createMemoryHistory(),
+      isAuthenticated: () => true
+    })
+
+    await router.push('/replay/match-114')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('replay')
+    expect(router.currentRoute.value.params.id).toBe('match-114')
+  })
+
+  it('chuyển khách chưa đăng nhập từ replay về login', async () => {
+    const router = createAppRouter({
+      history: createMemoryHistory(),
+      isAuthenticated: () => false
+    })
+
+    await router.push('/replay/match-private')
+    await router.isReady()
+
+    expect(router.currentRoute.value.path).toBe('/login')
+    expect(router.currentRoute.value.query.redirect).toBe('/replay/match-private')
+  })
+
   it('truy cập root / điều hướng về /lobby nếu đã đăng nhập và /login nếu chưa đăng nhập', async () => {
     // Trường hợp chưa đăng nhập
     const routerGuest = createAppRouter({

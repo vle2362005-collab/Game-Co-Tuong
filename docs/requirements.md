@@ -21,7 +21,7 @@ Ngày: 26/10/2026 · [Jira GCT-19](https://vle2362005.atlassian.net/browse/GCT-1
 | FR-11 | Kiểm thử tích hợp, bảo mật và sự cố | Bắt buộc V1 | GCT-93–96,104–107: có dữ liệu đầu vào, kết quả thực và bằng chứng; không dùng trạng thái Done thay cho kiểm thử |
 | FR-12 | Chơi với máy: Minimax + Alpha-Beta | Mở rộng V2 | GCT-68–72,90,113: dùng chung luật và sinh nước; giới hạn suy nghĩ, đi đúng luật, có mức khó và lưu kết quả; hợp đồng PvE bổ sung ở task tương ứng |
 | FR-13 | Gọi video/audio WebRTC | Mở rộng V2 | GCT-65–67,84–85: xin quyền thiết bị, signaling đúng phòng, ICE/TURN; lỗi gọi không làm hỏng trận |
-| FR-14 | Phát lại trận | Mở rộng V2 | GCT-92,114: tái tạo từ bàn ban đầu + chuỗi nước đã lưu, không sửa trận thật |
+| FR-14 | Phát lại trận | Mở rộng V2 | GCT-92,114: mở từ lịch sử cá nhân, điều hướng từng nước và tái tạo từ snapshot/nước đã lưu; chỉ đọc, không sửa trận thật ([GCT-114](GCT-114-replay.md)) |
 | FR-15 | Đặc tả luật lặp thế | Mở rộng V2 | GCT-62: ghi trường chiếu/trường tróc và ví dụ; chưa tuyên bố thực thi đầy đủ WXF |
 | FR-16 | Đóng gói, báo cáo và bảo vệ | V2 theo Jira hiện có | GCT-97–102: số liệu thực, build tái lập, hướng dẫn, tag/PR và hạn chế; V1 vẫn phải chạy được trước khi nghiệm thu |
 

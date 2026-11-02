@@ -1,6 +1,8 @@
 using System.Text.Json;
 using GameCoTuong.Application.Game;
 using GameCoTuong.Domain.Entities;
+using GameCoTuong.Domain.Enums;
+using GameCoTuong.Domain.ValueObjects;
 using GameCoTuong.Infrastructure.Game;
 using GameCoTuong.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -32,6 +34,78 @@ public sealed class GameFlowTests : IDisposable
         room = await Run(s => s.Start(room.Id,red,new(Guid.NewGuid())));
         return (room,room.MatchId!.Value);
     }
+
+    [Fact]
+    public async Task GCT114_history_details_replay_captured_piece_and_reading_does_not_change_match()
+    {
+        var (_, matchId) = await Start();
+        var initialBoard = new Board(new[]
+        {
+            new Piece("red-general-1", PieceType.General, Side.Red, new(4, 9)),
+            new Piece("black-general-1", PieceType.General, Side.Black, new(4, 0)),
+            new Piece("red-soldier-5", PieceType.Soldier, Side.Red, new(4, 5)),
+            new Piece("red-chariot-1", PieceType.Chariot, Side.Red, new(0, 8)),
+            new Piece("black-horse-1", PieceType.Horse, Side.Black, new(0, 3))
+        });
+        var initialJson = BoardSerializer.Serialize(initialBoard);
+        await using (var db = Db())
+        {
+            var match = await db.Matches.SingleAsync(m => m.Id == matchId);
+            match.InitialBoardJson = initialJson;
+            match.CurrentBoardJson = initialJson;
+            await db.SaveChangesAsync();
+        }
+
+        await Run(service => service.Move(matchId, red,
+            new MoveInput(Guid.NewGuid(), 1, "red-chariot-1", 0, 3)));
+        await Run(service => service.Surrender(matchId, black, true));
+
+        string savedCurrentBoard;
+        long savedVersion;
+        int savedMoveNumber;
+        string savedResult;
+        string savedMoveSnapshot;
+        await using (var db = Db())
+        {
+            var match = await db.Matches.AsNoTracking().SingleAsync(m => m.Id == matchId);
+            var move = await db.Moves.AsNoTracking().SingleAsync(m => m.MatchId == matchId);
+            savedCurrentBoard = match.CurrentBoardJson;
+            savedVersion = match.Version;
+            savedMoveNumber = match.MoveNumber;
+            savedResult = match.ResultReason!;
+            savedMoveSnapshot = move.BoardSnapshotJson!;
+            Assert.Equal("finished", match.Status);
+            Assert.Equal("black-horse-1", move.CapturedPieceId);
+        }
+
+        var details = JsonSerializer.SerializeToElement(
+            await Run(service => service.MatchDetails(matchId, red)),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal(initialJson, details.GetProperty("initialBoardJson").GetString());
+        Assert.Equal(savedCurrentBoard, details.GetProperty("currentBoardJson").GetString());
+        var moves = details.GetProperty("moves");
+        Assert.Equal(1, moves.GetArrayLength());
+        var savedMove = moves[0];
+        Assert.Equal(1, savedMove.GetProperty("ply").GetInt32());
+        Assert.Equal("black-horse-1", savedMove.GetProperty("capturedPieceId").GetString());
+        Assert.Equal(savedMoveSnapshot, savedMove.GetProperty("boardSnapshotJson").GetString());
+        using (var snapshot = JsonDocument.Parse(savedMoveSnapshot))
+            Assert.Equal(4, snapshot.RootElement.GetArrayLength());
+
+        Assert.Equal("NOT_MATCH_PLAYER", (await Assert.ThrowsAsync<GameFault>(
+            () => Run(service => service.MatchDetails(matchId, outsider)))).Code);
+
+        await using var verify = Db();
+        var unchangedMatch = await verify.Matches.AsNoTracking().SingleAsync(m => m.Id == matchId);
+        var unchangedMove = await verify.Moves.AsNoTracking().SingleAsync(m => m.MatchId == matchId);
+        Assert.Equal(savedCurrentBoard, unchangedMatch.CurrentBoardJson);
+        Assert.Equal(savedVersion, unchangedMatch.Version);
+        Assert.Equal(savedMoveNumber, unchangedMatch.MoveNumber);
+        Assert.Equal(savedResult, unchangedMatch.ResultReason);
+        Assert.Equal(savedMoveSnapshot, unchangedMove.BoardSnapshotJson);
+        Assert.Equal(1, await verify.Moves.CountAsync(m => m.MatchId == matchId));
+    }
+
     [Fact] public async Task Create_retry_join_race_and_access_checks()
     {
         var input = new CreateRoomInput(Guid.NewGuid(),"Race room");
