@@ -16,8 +16,11 @@ let active = true
 let poll: ReturnType<typeof setInterval> | null = null
 const sync = createMatchSync(id, () => gameApi.match(id), onSnapshot, e => { error.value = e instanceof Error ? e.message : String(e) })
 const match = sync.snapshot
+const isAiMatch = computed(() => match.value?.mode === 'pve' || match.value?.mode === 'ai')
 const side = computed(() => match.value?.players.find(p => p.userId === auth.user.value?.id)?.side || 'red')
 const opponent = computed(() => room.value?.members.find(p => p.userId !== auth.user.value?.id))
+const difficultyLabel = computed(() => (({ easy: 'Dễ', medium: 'Vừa', hard: 'Khó' } as Record<string, string>)[match.value?.aiDifficulty || ''] || match.value?.aiDifficulty || 'Vừa'))
+const aiThinking = ref(false)
 const resultLabel = computed(() => {
   const result = match.value?.result
   if (!result) return 'Kết quả chưa được đồng bộ.'
@@ -36,14 +39,14 @@ const resultLabel = computed(() => {
   } as Record<string, string>)[result.reasonCode] || result.reasonCode
   return `${outcome} · ${reason}`
 })
-const canMove = computed(() => !busy.value && !sync.needsRefresh.value && auth.signalR.isConnected.value && match.value?.status === 'playing' && match.value.sideToMove === side.value && room.value?.members.every(m => m.connected))
+const canMove = computed(() => !busy.value && !sync.needsRefresh.value && (isAiMatch.value || auth.signalR.isConnected.value) && match.value?.status === 'playing' && match.value.sideToMove === side.value && room.value?.members.every(m => m.connected))
 const destinations = computed(() => canMove.value ? (match.value?.legalMoves || []).filter(m => m.pieceId === selected.value).map(m => m.to) : [])
 const checkedGeneralId = computed(() => match.value?.check ? match.value.pieces.find(p => p.type.toLowerCase() === 'general' && p.side.toLowerCase() === match.value?.sideToMove)?.id : null)
 function onSnapshot(next: Match) {
   selected.value = null
   if (next.lastMove?.requestId === pendingMove.value?.requestId) pendingMove.value = null
   if (next.result) auth.activeMatch.value = null
-  else auth.enterMatch({ id, roomId: next.roomId, side: (next.players.find(p => p.userId === auth.user.value?.id)?.side || 'red') as 'red' | 'black', opponentName: opponent.value?.displayName || 'Đối thủ' })
+  else auth.enterMatch({ id, roomId: next.roomId, side: (next.players.find(p => p.userId === auth.user.value?.id)?.side || 'red') as 'red' | 'black', opponentName: next.mode === 'pve' || next.mode === 'ai' ? 'Máy' : opponent.value?.displayName || 'Đối thủ' })
 }
 async function load() {
   const ok = await sync.refresh()
@@ -56,6 +59,14 @@ async function retrySync() {
   error.value = ''
   try {
     if (!await load() || !active || match.value?.result) return
+    if (isAiMatch.value) {
+      if (match.value?.status === 'paused') {
+        const restored = await gameApi.reconnect(id)
+        sync.accept(restored, true)
+        if (!restored.result) room.value = await gameApi.room(restored.roomId)
+      }
+      return
+    }
     if (!await auth.signalR.connect()) throw new Error('Chưa kết nối máy chủ trực tuyến.')
     if (!active || !match.value || match.value.result) return
     await auth.signalR.invoke('JoinRoom', match.value.roomId)
@@ -63,7 +74,7 @@ async function retrySync() {
     await load()
   } catch (e) { if (active) error.value = String(e) }
 }
-function checkSnapshot() { if (active && match.value && !busy.value && auth.signalR.isConnected.value) void sync.refresh() }
+function checkSnapshot() { if (active && match.value && !busy.value && (isAiMatch.value || auth.signalR.isConnected.value)) void sync.refresh() }
 async function cell(col: number, row: number) {
   if (!canMove.value || !match.value) return
   const piece = match.value.pieces.find(p => p.position.col === col && p.position.row === row)
@@ -84,6 +95,7 @@ async function cell(col: number, row: number) {
 async function sendMove() {
   if (!pendingMove.value || busy.value) return
   busy.value = true; error.value = ''
+  aiThinking.value = match.value?.mode === 'pve' || match.value?.mode === 'ai'
   const input = pendingMove.value
   try { sync.accept(await gameApi.move(id, input.pieceId, input.col, input.row, input.version, input.requestId), true); pendingMove.value = null }
   catch (e) {
@@ -95,7 +107,7 @@ async function sendMove() {
       if (!pendingMove.value) error.value = ''
     }
     selected.value = null
-  } finally { busy.value = false }
+  } finally { busy.value = false; aiThinking.value = false }
 }
 async function end(draw = false) {
   if (busy.value || (!draw && !window.confirm('Bạn xác nhận đầu hàng?'))) return
@@ -110,26 +122,26 @@ onMounted(async () => {
   off.push(auth.signalR.on('MatchChanged', m => { sync.accept(m as Match) }))
   off.push(auth.signalR.on('RoomStateChanged', r => { const next = r as Room; if (active && next.id === match.value?.roomId && (!room.value || next.version > room.value.version)) room.value = next }))
   off.push(auth.signalR.on('Reconnected', m => { if (active) sync.accept(m as Match) }))
-  off.push(auth.signalR.on('TransportReconnected', () => { if (active && match.value && !match.value.result) void (async () => { await auth.signalR.invoke('JoinRoom', match.value!.roomId); if (active) await load() })().catch(e => { if (active) error.value = String(e) }) }))
+  off.push(auth.signalR.on('TransportReconnected', () => { if (active && match.value && !isAiMatch.value && !match.value.result) void (async () => { await auth.signalR.invoke('JoinRoom', match.value!.roomId); if (active) await load() })().catch(e => { if (active) error.value = String(e) }) }))
   // Periodic/focus reads also recover a final event that was lost with no later event to expose the gap.
   poll = setInterval(checkSnapshot, 15000)
   window.addEventListener('focus', checkSnapshot)
   await retrySync()
 })
-onUnmounted(() => { active = false; if (poll) clearInterval(poll); window.removeEventListener('focus', checkSnapshot); sync.dispose(); off.forEach(fn => fn()); if (room.value && match.value) void auth.signalR.invoke('LeaveRoom', match.value.roomId).catch(() => {}) })
+onUnmounted(() => { active = false; if (poll) clearInterval(poll); window.removeEventListener('focus', checkSnapshot); sync.dispose(); off.forEach(fn => fn()); if (room.value && match.value && !isAiMatch.value) void auth.signalR.invoke('LeaveRoom', match.value.roomId).catch(() => {}) })
 </script>
 <template>
   <section class="game" :data-match-id="id" :data-version="match?.version">
     <p v-if="error" role="alert" class="error">{{ error }} <button v-if="pendingMove" :disabled="busy" @click="sendMove">Gửi lại cùng mã nước</button> <button :disabled="sync.refreshing.value" @click="retrySync">Đồng bộ lại</button></p>
     <p v-if="sync.refreshing.value && (!match || sync.needsRefresh.value)" role="status">Đang đồng bộ bàn cờ…</p>
     <template v-if="match">
-      <div class="heading"><h1>Ván cờ · {{ room?.code || 'Lịch sử' }}</h1><span>Bạn cầm {{ side==='red' ? 'Đỏ' : 'Đen' }}</span></div>
+      <div class="heading"><h1>Ván cờ · {{ room?.code || 'Lịch sử' }}</h1><span v-if="match.mode==='pve' || match.mode==='ai'">Bạn cầm Đỏ · Máy cầm Đen · Mức {{ difficultyLabel }}</span><span v-else>Bạn cầm {{ side==='red' ? 'Đỏ' : 'Đen' }}</span></div>
       <p v-if="match.result" role="status"><strong>Kết thúc: {{ resultLabel }}</strong></p>
-      <p v-else>Lượt {{ match.sideToMove==='red' ? 'Đỏ' : 'Đen' }} · Nước {{ match.moveNumber }} <strong v-if="match.check">· Chiếu Tướng!</strong> <span v-if="!auth.signalR.isConnected.value">· Đang nối lại…</span></p>
+      <p v-else>Lượt {{ match.sideToMove==='red' ? 'Đỏ' : 'Đen' }} · Nước {{ match.moveNumber }} <strong v-if="match.check">· Chiếu Tướng!</strong> <span v-if="aiThinking" role="status">· Máy đang suy nghĩ…</span> <span v-else-if="!isAiMatch && !auth.signalR.isConnected.value">· Đang nối lại…</span></p>
       <div class="game-layout"><div><XiangqiBoard :pieces="match.pieces" :flipped="side==='black'" :selected="selected" :disabled="!canMove" :destinations="destinations" :last-move="match.lastMove" :checked-general-id="checkedGeneralId" @cell="cell"/>
-        <div class="controls" v-if="match.status==='playing'"><button :disabled="busy" @click="end()">Đầu hàng</button><button :disabled="busy" @click="end(true)">{{ match.drawOfferedBy && match.drawOfferedBy!==side ? 'Đồng ý hòa' : 'Đề nghị hòa' }}</button></div>
+        <div class="controls" v-if="match.status==='playing'"><button :disabled="busy" @click="end()">Đầu hàng</button><button v-if="match.mode!=='pve' && match.mode!=='ai'" :disabled="busy" @click="end(true)">{{ match.drawOfferedBy && match.drawOfferedBy!==side ? 'Đồng ý hòa' : 'Đề nghị hòa' }}</button></div>
         <div v-else class="controls"><button @click="leave()">Rời phòng, về sảnh</button><button @click="leave('/history')">Xem lịch sử</button></div>
-      </div><aside v-if="room && !match.result"><RoomChat :room-id="match.roomId"/><VideoCall :room-id="match.roomId" :opponent-id="opponent?.userId || null"/></aside></div>
+      </div><aside v-if="room && !match.result && match.mode!=='pve' && match.mode!=='ai'"><RoomChat :room-id="match.roomId"/><VideoCall :room-id="match.roomId" :opponent-id="opponent?.userId || null"/></aside></div>
     </template><p v-else>Đang tải ván cờ…</p>
   </section>
 </template>

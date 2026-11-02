@@ -6,6 +6,7 @@ public class Match
     public Guid RoomId { get; set; }
     public Room? Room { get; set; }
     public string Mode { get; set; } = "pvp";
+    public string AiDifficulty { get; set; } = "medium";
     public string RuleSetVersion { get; set; } = "gct-core-1";
     public string Status { get; set; } = "playing";
     public long Version { get; set; } = 1;

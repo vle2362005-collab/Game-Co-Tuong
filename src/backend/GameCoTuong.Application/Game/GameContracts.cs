@@ -1,6 +1,7 @@
 namespace GameCoTuong.Application.Game;
 
 public sealed record CreateRoomInput(Guid RequestId, string Name = "Phòng cờ");
+public sealed record CreateAiMatchInput(Guid RequestId, string Difficulty = "medium");
 public sealed record CommandInput(Guid RequestId);
 public sealed record ReadyInput(bool Ready);
 public sealed record MoveInput(Guid RequestId, long ExpectedVersion, string PieceId, int ToCol, int ToRow);
