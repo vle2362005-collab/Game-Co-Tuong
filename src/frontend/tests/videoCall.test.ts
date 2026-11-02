@@ -33,6 +33,19 @@ describe('Video call lifecycle', () => {
     await call.receive({ ...offer, type: 'ice', data: '{}' })
     expect(media).not.toHaveBeenCalled(); expect(call.status.value).toBe('idle')
   })
+  it('reports denied device permission, returns to idle, and allows retry', async () => {
+    const { call, media, tracks } = fixture()
+    media.mockRejectedValueOnce(new DOMException('Permission denied', 'NotAllowedError'))
+    await call.start('other')
+    expect(call.error.value).toBe('Bạn chưa cấp quyền camera/micro.')
+    expect(call.status.value).toBe('idle')
+    expect(call.local.value).toBeNull()
+
+    await call.start('other')
+    expect(call.status.value).toBe('calling')
+    await call.hangup()
+    tracks.forEach(t => expect(t.stop).toHaveBeenCalledOnce())
+  })
   it('cancelling a pending permission request stops the stream when it eventually arrives', async () => {
     const { call, media, tracks } = fixture()
     let resolve!: (stream: MediaStream) => void
