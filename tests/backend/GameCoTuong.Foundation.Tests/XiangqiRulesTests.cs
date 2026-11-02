@@ -4,11 +4,16 @@ using GameCoTuong.Engine.Model;
 using GameCoTuong.Engine.Rules;
 using GameCoTuong.Engine.AI;
 using GameCoTuong.Engine.Serialization;
+using Xunit.Abstractions;
 
 namespace GameCoTuong.Foundation.Tests;
 
 public sealed class XiangqiRulesTests
 {
+    private readonly ITestOutputHelper output;
+
+    public XiangqiRulesTests(ITestOutputHelper output) => this.output = output;
+
     internal static Piece P(string name, PieceType type, Side side, int col, int row) => new(name, type, side, new(col, row));
     internal static Board Fixture(params Piece[] extra) => new(new[] {
         P("red-general-1", PieceType.General, Side.Red, 4, 9), P("black-general-1", PieceType.General, Side.Black, 4, 0),
@@ -112,5 +117,27 @@ public sealed class XiangqiRulesTests
         var move = Minimax.FindBest(board,Side.Red,3,TimeSpan.FromTicks(1));
         Assert.NotNull(move);
         Assert.True(XiangqiRules.IsLegal(board,Side.Red,move));
+    }
+    [Fact] public void Alpha_beta_preserves_minimax_score_reduces_nodes_and_leaves_board_unchanged()
+    {
+        var board = BoardInitializer.CreateInitialBoard();
+        var original = BoardSerializer.Serialize(board);
+        const int depth = 3;
+
+        var baseline = Minimax.FindBestWithStats(board, Side.Red, depth, alphaBeta: false, orderMoves: false);
+        var optimized = Minimax.FindBestWithStats(board, Side.Red, depth, alphaBeta: true, orderMoves: true);
+
+        Assert.Equal(baseline.Score, optimized.Score);
+        Assert.NotNull(baseline.BestMove);
+        Assert.NotNull(optimized.BestMove);
+        Assert.True(XiangqiRules.IsLegal(board, Side.Red, baseline.BestMove));
+        Assert.True(XiangqiRules.IsLegal(board, Side.Red, optimized.BestMove));
+        Assert.True(optimized.Nodes < baseline.Nodes,
+            $"Expected ordered alpha-beta to visit fewer nodes; baseline={baseline.Nodes}, optimized={optimized.Nodes}.");
+        Assert.Equal(original, BoardSerializer.Serialize(board));
+
+        output.WriteLine($"Depth {depth} baseline: score={baseline.Score}, nodes={baseline.Nodes}, elapsed={baseline.Elapsed.TotalMilliseconds:F2} ms.");
+        output.WriteLine($"Depth {depth} alpha-beta + tactical ordering: score={optimized.Score}, nodes={optimized.Nodes}, elapsed={optimized.Elapsed.TotalMilliseconds:F2} ms.");
+        output.WriteLine($"Nodes reduced: {(1d - (double)optimized.Nodes / baseline.Nodes):P1}.");
     }
 }
