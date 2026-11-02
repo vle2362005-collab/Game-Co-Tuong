@@ -1,0 +1,31 @@
+{
+  "scope": "local GameService + SQLite; includes queue/context/JIT; excludes HTTP/LAN/browser",
+  "os": "Ubuntu 24.04.3 LTS",
+  "runtime": ".NET 10.0.14",
+  "architecture": "X64",
+  "logicalCpus": 8,
+  "rooms": 10,
+  "samples": 100,
+  "p50Ms": 109.96,
+  "p95Ms": 170.28,
+  "ai": [
+    {
+      "difficulty": "easy",
+      "samples": 5,
+      "p50Ms": 48.58,
+      "p95Ms": 53.65
+    },
+    {
+      "difficulty": "medium",
+      "samples": 5,
+      "p50Ms": 270.2,
+      "p95Ms": 330.56
+    },
+    {
+      "difficulty": "hard",
+      "samples": 5,
+      "p50Ms": 1500.85,
+      "p95Ms": 1503.63
+    }
+  ]
+}
