@@ -42,6 +42,13 @@ public sealed class MatchRecoveryHostedService(
                     await notifier.NotifyExpired(offer.MatchId, offer.RoomId, stoppingToken);
                 logger.LogInformation("Expired draw offers processed. {MatchCount} {ServiceState}", expiredDrawOffers.Count, "running");
             }
+            var closedRooms = await game.CleanupRooms();
+            if (closedRooms.Count > 0)
+            {
+                var notifier = scope.ServiceProvider.GetRequiredService<IRoomCleanupNotifier>();
+                foreach (var room in closedRooms)
+                    await notifier.NotifyClosed(room, stoppingToken);
+            }
         }
     }
 }

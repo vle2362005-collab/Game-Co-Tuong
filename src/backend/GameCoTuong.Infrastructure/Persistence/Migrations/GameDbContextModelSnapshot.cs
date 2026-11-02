@@ -114,6 +114,13 @@ namespace GameCoTuong.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("AiDifficulty")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)")
+                        .HasDefaultValue("medium");
+
                     b.Property<DateTimeOffset?>("BlackDeadlineAt")
                         .HasColumnType("datetimeoffset");
 

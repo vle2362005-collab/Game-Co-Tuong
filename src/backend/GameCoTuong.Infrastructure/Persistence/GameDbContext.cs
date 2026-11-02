@@ -100,6 +100,7 @@ public class GameDbContext : DbContext
             entity.ToTable("Matches");
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Mode).HasMaxLength(20).HasDefaultValue("pvp");
+            entity.Property(e => e.AiDifficulty).HasMaxLength(20).HasDefaultValue("medium");
             entity.Property(e => e.RuleSetVersion).HasMaxLength(50).HasDefaultValue("gct-core-1");
             entity.Property(e => e.Status).HasMaxLength(20).HasDefaultValue("playing");
             entity.Property(e => e.Version).HasDefaultValue(1L);

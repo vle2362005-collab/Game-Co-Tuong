@@ -27,7 +27,9 @@ SQLite dành cho demo và kiểm thử độc lập. Bỏ `Database:Provider=Sql
 
 Trong phòng chờ hoặc ván cờ: Gọi video → đối thủ Nhận/Từ chối. Camera/micro chỉ được xin quyền sau thao tác Gọi hoặc Nhận. Có video hai bên, bật/tắt mic/camera, kết thúc, tự dọn stream khi rời màn hình, mất kết nối hoặc đăng xuất. Offer/Answer/ICE mang call ID và đúng người nhận; ICE đợi remote description, tín hiệu phiên cũ bị từ chối.
 
-Camera cần HTTPS hoặc localhost. `VITE_ICE_SERVERS` nhận mảng `RTCIceServer` dạng JSON; STUN mặc định chỉ hỗ trợ tìm đường kết nối. Mạng có NAT/firewall hạn chế cần TURN và HTTPS, thuộc công việc GCT-67 của Sprint 4. Không tuyên bố đã kiểm thử mọi mạng Internet hoặc thiết bị vật lý.
+Camera cần HTTPS hoặc localhost. `VITE_ICE_SERVERS` nhận mảng `RTCIceServer` dạng JSON trong cấu hình frontend; STUN mặc định chỉ hỗ trợ tìm đường kết nối. Thêm URL TURN, `username` và `credential` do nhà cung cấp cấp để dùng TURN. Mọi `VITE_*` được nhúng công khai vào bundle; không đặt secret TURN dùng chung hoặc credential dài hạn ở đây. Dùng credential tạm thời có phạm vi/hạn dùng ngắn, hoặc cấp credential tạm qua backend từ secret chỉ lưu phía máy chủ. Mẫu cấu hình có trong [`src/frontend/.env.example`](../src/frontend/.env.example).
+
+`VITE_ICE_TRANSPORT_POLICY=relay` buộc WebRTC chỉ chọn relay, dùng để xác nhận cuộc gọi thật sự đi qua TURN; để `all` khi sử dụng thông thường. Quy trình nghiệm thu yêu cầu hai thiết bị trên hai mạng khác nhau, HTTPS, bật camera/micro và lưu thời gian, trình duyệt/OS, mạng, trạng thái kết nối cùng ICE candidate pair trong `RTCPeerConnection.getStats()`. Chạy một lượt `all`, sau đó `relay`; lượt `relay` chỉ đạt khi cuộc gọi kết nối và candidate pair được chọn có `candidateType: "relay"` ở cả hai phía. Lưu lỗi/time-out và provider/region TURN, không lưu credential hoặc SDP chứa thông tin nhạy cảm vào log. Chưa có endpoint/credential TURN và hai mạng ngoài để chạy kiểm tra này trong môi trường phát triển hiện tại; chưa xác nhận cuộc gọi khác mạng hoặc relay thực tế. STUN/loopback localhost không phải bằng chứng thay thế. HTTPS, NAT/firewall, firewall UDP/TCP, TURN provider và hạn mức dịch vụ vẫn có thể làm kết nối thất bại.
 
 ## Mã nguồn và đối chiếu
 
@@ -36,13 +38,14 @@ Camera cần HTTPS hoặc localhost. `VITE_ICE_SERVERS` nhận mảng `RTCIceSer
 | GCT-27/28/29/30/7/32/33/34/35 | `src/backend/GameCoTuong.Api/Endpoints/AuthEndpoints.cs`, `Hubs/GameHub.cs`, `src/frontend/src/composables/useAuth.ts`, `api/signalr.ts` |
 | GCT-43/106/107 | `Engine/Model/GameState.cs`, `tests/backend/GameCoTuong.Foundation.Tests/XiangqiRulesTests.cs`, `GameFlowTests.cs`, `TestDatabase.cs` |
 | GCT-50/51/52/53/54/55/56/57/58/59/60 | `src/backend/GameCoTuong.Engine/Rules/XiangqiRules.cs` |
-| GCT-62 | [Đặc tả lặp thế](repetition-scope.md) |
+| GCT-62 / GCT-112 | [Đặc tả và đối chiếu luật lặp](repetition-scope.md); ba mẫu lặp đã chạy qua luồng GameService |
 | GCT-36/37/39/40/44/46/73/74/86/8 | `src/backend/GameCoTuong.Infrastructure/Game/GameService.cs`, API `RoomEndpoints.cs`, `MatchEndpoints.cs` |
 | GCT-104 | `AuthorizationAndRoomAccessTests.cs`, `GameFlowTests.cs`, browser check |
 | GCT-41/38/45/49/105/81 | `src/frontend/src/components/XiangqiBoard.vue`, `boardLayout.ts`, `LobbyView.vue`, `RoomView.vue`, `GameView.vue` |
 | GCT-63/64/111 | `RoomChat.vue`, `GameHub.SendRoomMessage`, `GameService.Chat` |
 | GCT-68/69/70 | `src/backend/GameCoTuong.Engine/AI/Minimax.cs`, `XiangqiRules.Generate` |
 | GCT-65/66 | `GameHub.Signal`, `VideoCalls.cs`, `useVideoCall.ts`, `VideoCall.vue`, `videoCall.test.ts` |
+| GCT-85 | `GameFlowTests.cs`, `AuthorizationAndRoomAccessTests.cs`, `videoCall.test.ts`; [bảng kết quả](GCT-85-communication-test-results.md) |
 
 ## Kiểm tra
 

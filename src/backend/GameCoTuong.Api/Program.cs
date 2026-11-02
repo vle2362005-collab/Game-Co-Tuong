@@ -36,6 +36,7 @@ builder.Services.AddHealthChecks();
 builder.Services.AddSingleton<LiveConnections>();
 builder.Services.AddSingleton<VideoCalls>();
 builder.Services.AddScoped<IDrawOfferExpirationNotifier, MatchEventNotifier>();
+builder.Services.AddScoped<IRoomCleanupNotifier, MatchEventNotifier>();
 builder.Services.AddSignalR(options => options.AddFilter<SessionHubFilter>());
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddHostedService<GameCoTuong.Infrastructure.Game.MatchRecoveryHostedService>();

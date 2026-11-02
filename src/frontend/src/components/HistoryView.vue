@@ -97,6 +97,12 @@ function reasonText(item: MatchHistoryItem) {
 function playedAt(item: MatchHistoryItem) {
   return new Date(item.startedAt).toLocaleString('vi-VN')
 }
+
+function modeText(item: MatchHistoryItem) {
+  if (item.mode !== 'ai' && item.mode !== 'pve') return 'Đấu với người'
+  const difficulty = (({ easy: 'Dễ', medium: 'Vừa', hard: 'Khó' } as Record<string, string>)[item.aiDifficulty || ''] || item.aiDifficulty)
+  return difficulty ? `Đấu với máy · Mức ${difficulty}` : 'Đấu với máy'
+}
 </script>
 
 <template>
@@ -203,12 +209,12 @@ function playedAt(item: MatchHistoryItem) {
         <div class="item-details">
           <h4>vs {{ item.mode === 'ai' || item.mode === 'pve' ? 'Máy' : item.opponent?.displayName || 'Kỳ thủ' }}</h4>
           <p class="item-meta">
-            <span>{{ item.mode === 'ai' || item.mode === 'pve' ? 'Đấu với máy' : 'Đấu với người' }}</span> ·
+            <span>{{ modeText(item) }}</span> ·
             <span>{{ reasonText(item) }}</span> ·
             <span>{{ item.moveNumber }} nước</span> ·
             <span>{{ playedAt(item) }}</span>
           </p>
-          <button type="button" class="btn-review" @click="router.push(`/game/${item.id}`)">Xem lại ván</button>
+          <button type="button" class="btn-review" @click="router.push(item.outcome==='in-progress' ? `/game/${item.id}` : `/history/${item.id}/replay`)">{{ item.outcome==='in-progress' ? 'Tiếp tục ván' : 'Xem lại ván' }}</button>
         </div>
       </div>
     </div>

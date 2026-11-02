@@ -11,6 +11,7 @@ import LobbyView from '../components/LobbyView.vue'
 import RoomView from '../components/RoomView.vue'
 import GameView from '../components/GameView.vue'
 import HistoryView from '../components/HistoryView.vue'
+import ReplayView from '../components/ReplayView.vue'
 import { useAuth } from '../composables/useAuth'
 
 export const routes: RouteRecordRaw[] = [
@@ -52,6 +53,12 @@ export const routes: RouteRecordRaw[] = [
   {
     path: '/match/:id',
     redirect: to => `/game/${to.params.id}`
+  },
+  {
+    path: '/history/:id/replay',
+    name: 'replay',
+    component: ReplayView,
+    meta: { requiresAuth: true, title: 'Xem lại trận' }
   },
   {
     path: '/history',

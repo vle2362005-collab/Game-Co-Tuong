@@ -547,7 +547,7 @@ public sealed class AuthorizationAndRoomAccessTests : IClassFixture<WebApplicati
 
         using var scope = _factory.Services.CreateScope();
         var roomAuthService = scope.ServiceProvider.GetRequiredService<IRoomAuthorizationService>();
-        var hub = new GameHub(roomAuthService, scope.ServiceProvider.GetRequiredService<GameCoTuong.Infrastructure.Game.GameService>(), new LiveConnections(), new VideoCalls());
+        var hub = new GameHub(roomAuthService, scope.ServiceProvider.GetRequiredService<GameCoTuong.Infrastructure.Game.GameService>(), new LiveConnections(), new VideoCalls(), Microsoft.Extensions.Logging.Abstractions.NullLogger<GameHub>.Instance);
 
         // Mock HubCallerContext for outsider
         var claims = new[]
@@ -853,7 +853,7 @@ public sealed class AuthorizationAndRoomAccessTests : IClassFixture<WebApplicati
 
         using var scope = _factory.Services.CreateScope();
         var roomAuthService = scope.ServiceProvider.GetRequiredService<IRoomAuthorizationService>();
-        var hub = new GameHub(roomAuthService, scope.ServiceProvider.GetRequiredService<GameCoTuong.Infrastructure.Game.GameService>(), new LiveConnections(), new VideoCalls());
+        var hub = new GameHub(roomAuthService, scope.ServiceProvider.GetRequiredService<GameCoTuong.Infrastructure.Game.GameService>(), new LiveConnections(), new VideoCalls(), Microsoft.Extensions.Logging.Abstractions.NullLogger<GameHub>.Instance);
 
         var groupManager = new TestGroupManager();
         var clients = new TestHubCallerClients();
@@ -911,7 +911,7 @@ public sealed class AuthorizationAndRoomAccessTests : IClassFixture<WebApplicati
 
         // 1. Member joins -> success
         var live = new LiveConnections();
-        var memberHub = new GameHub(roomAuthService, scope.ServiceProvider.GetRequiredService<GameCoTuong.Infrastructure.Game.GameService>(), live, new VideoCalls());
+        var memberHub = new GameHub(roomAuthService, scope.ServiceProvider.GetRequiredService<GameCoTuong.Infrastructure.Game.GameService>(), live, new VideoCalls(), Microsoft.Extensions.Logging.Abstractions.NullLogger<GameHub>.Instance);
         var memberGroups = new TestGroupManager();
         var memberClients = new TestHubCallerClients();
         var memberPrincipal = new ClaimsPrincipal(new ClaimsIdentity(
@@ -940,7 +940,7 @@ public sealed class AuthorizationAndRoomAccessTests : IClassFixture<WebApplicati
             Assert.Equal(roomVersionAfterFirstJoin, (await db.Rooms.SingleAsync(r => r.Id == roomId)).Version);
 
         // 2. Outsider joins -> HubException FORBIDDEN
-        var outHub = new GameHub(roomAuthService, scope.ServiceProvider.GetRequiredService<GameCoTuong.Infrastructure.Game.GameService>(), new LiveConnections(), new VideoCalls());
+        var outHub = new GameHub(roomAuthService, scope.ServiceProvider.GetRequiredService<GameCoTuong.Infrastructure.Game.GameService>(), new LiveConnections(), new VideoCalls(), Microsoft.Extensions.Logging.Abstractions.NullLogger<GameHub>.Instance);
         var outGroups = new TestGroupManager();
         var outClients = new TestHubCallerClients();
         var outPrincipal = new ClaimsPrincipal(new ClaimsIdentity(
@@ -993,7 +993,7 @@ public sealed class AuthorizationAndRoomAccessTests : IClassFixture<WebApplicati
         using var scope = _factory.Services.CreateScope();
         var roomAuthService = scope.ServiceProvider.GetRequiredService<IRoomAuthorizationService>();
 
-        var hub = new GameHub(roomAuthService, scope.ServiceProvider.GetRequiredService<GameCoTuong.Infrastructure.Game.GameService>(), new LiveConnections(), new VideoCalls());
+        var hub = new GameHub(roomAuthService, scope.ServiceProvider.GetRequiredService<GameCoTuong.Infrastructure.Game.GameService>(), new LiveConnections(), new VideoCalls(), Microsoft.Extensions.Logging.Abstractions.NullLogger<GameHub>.Instance);
         var clients = new TestHubCallerClients();
         var memberPrincipal = new ClaimsPrincipal(new ClaimsIdentity(
             new[] { new Claim(ClaimTypes.NameIdentifier, memberUser.Id.ToString()) }, "Bearer"));
@@ -1015,7 +1015,7 @@ public sealed class AuthorizationAndRoomAccessTests : IClassFixture<WebApplicati
         Assert.False(clients.GroupProxies.ContainsKey(groupB));
 
         // Outsider attempts to send message -> FORBIDDEN
-        var outHub = new GameHub(roomAuthService, scope.ServiceProvider.GetRequiredService<GameCoTuong.Infrastructure.Game.GameService>(), new LiveConnections(), new VideoCalls());
+        var outHub = new GameHub(roomAuthService, scope.ServiceProvider.GetRequiredService<GameCoTuong.Infrastructure.Game.GameService>(), new LiveConnections(), new VideoCalls(), Microsoft.Extensions.Logging.Abstractions.NullLogger<GameHub>.Instance);
         var outPrincipal = new ClaimsPrincipal(new ClaimsIdentity(
             new[] { new Claim(ClaimTypes.NameIdentifier, outsiderUser.Id.ToString()) }, "Bearer"));
         outHub.Context = new TestHubCallerContext(outPrincipal);

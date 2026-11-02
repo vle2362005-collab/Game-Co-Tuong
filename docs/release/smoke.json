@@ -1,0 +1,11 @@
+{
+  "passed": true,
+  "scope": "published API; loopback HTTP; temporary SQLite; no browser/real SQL Server/TURN",
+  "checks": [
+    "published API health",
+    "two account registration/login",
+    "room/join/ready/start",
+    "move and idempotent retry",
+    "surrender/close/persistent replay history"
+  ]
+}

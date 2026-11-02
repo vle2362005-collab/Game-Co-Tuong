@@ -2,71 +2,40 @@
 
 # Game Cờ Tướng
 
-Bộ khung phát triển chung cho nhóm: Vue + TypeScript và ASP.NET Core. API, bộ luật, dữ liệu và kiểm thử nằm trong các project riêng. Hiện chạy được trang khởi tạo và API `/health`; chức năng chơi cờ sẽ được triển khai ở các task tiếp theo.
+Vue/TypeScript và ASP.NET Core: tài khoản, phòng hai người, luật cờ, SignalR, chat/video, phục hồi, PvE Minimax/Alpha-Beta, lịch sử và xem lại từng nước.
 
-## Chạy nhanh sau khi clone
+## Chạy và bàn giao
 
-Cài **.NET SDK 10.0.403**, **Node.js 24.22.1** và **npm 11.x**. Dùng VS Code hoặc terminal; lệnh dưới chạy được trong PowerShell và Bash. Cần Internet ở lần restore đầu.
+Cài **.NET SDK 10.0.403**, **Node 24.22.1**, **npm 11.x**. Clone repo, cập nhật `develop`, checkout đúng commit cần kiểm tra.
 
-Từ thư mục gốc repo, terminal thứ nhất:
-
-```sh
-dotnet restore GameCoTuong.sln --locked-mode -m:1
-dotnet build GameCoTuong.sln -c Release --no-restore -m:1 -p:UseSharedCompilation=false
-dotnet run --project src/backend/GameCoTuong.Api -c Release --no-build --no-restore --launch-profile http
-```
-
-Terminal thứ hai, cũng từ thư mục gốc:
+- [Cài đặt, SQL Server/JWT/CORS/HTTPS/TURN, sử dụng và rollback](docs/release/runbook.md).
+- [Kết quả kiểm thử, p50/p95 và phần chưa nghiệm thu](docs/release/verification.md).
+- [Phân tích/thiết kế](docs/release/analysis-design.md), [kịch bản bảo vệ](docs/release/demo.md), [bàn giao](docs/release/handover.md).
 
 ```sh
-cd src/frontend
-npm ci
-npm run dev
+# Kiểm tra toàn bộ (hoặc ./scripts/verify.ps1 trên PowerShell)
+bash scripts/verify.sh
+# Đóng gói API + web + SQL + manifest (hoặc ./scripts/package-demo.ps1)
+bash scripts/package-demo.sh
+# Smoke test bản publish qua HTTP, DB/khóa/tài khoản tạm
+node scripts/smoke-demo.mjs
 ```
 
-Mở **http://localhost:5173**, bấm **Kiểm tra máy chủ**. API chạy tại **http://localhost:5000/health**. Không cần SQL Server, tài khoản hay JWT key để chạy bộ khung này. Không phải sao chép cấu hình mẫu để chạy mặc định.
+Để chơi: làm theo runbook cấu hình DB/JWT rồi chạy API tại `http://localhost:5000`, frontend `npm --prefix src/frontend run dev` tại `http://localhost:5173`. Hai tài khoản tự đăng ký → tạo/join phòng → ready/start. Trong sảnh có chơi máy; từ lịch sử có xem lại chỉ đọc với nút đầu/lùi/tiến/cuối.
 
-## Cấu trúc
+SQL Server là cấu hình demo có worker phục hồi tự động. SQLite tạm phục vụ kiểm thử/local, worker tự động bị tắt. Camera cần HTTPS hoặc localhost; cuộc gọi khác mạng cần xác minh TURN thực. Không có mật khẩu/credential dùng chung trong repo.
 
-| Đường dẫn | Trách nhiệm |
+## Mã nguồn và tài liệu
+
+| Thư mục | Nội dung |
 |---|---|
-| `src/frontend` | Vue + TypeScript, trang khởi tạo và kiểm tra kết nối |
-| `src/backend/GameCoTuong.Api` | Điểm khởi động HTTP, cấu hình, health và CORS |
-| `src/backend/GameCoTuong.Application` | Vị trí cho use case và interface lưu trữ |
-| `src/backend/GameCoTuong.Domain` | Vị trí cho entity/value object độc lập |
-| `src/backend/GameCoTuong.Engine` | Vị trí cho bộ luật thuần, chỉ tham chiếu Domain |
-| `src/backend/GameCoTuong.Infrastructure` | Vị trí cho EF Core, adapter dữ liệu và outbox |
-| `tests/backend` | Kiểm thử khởi động API và CORS bằng xUnit |
-| `src/frontend/tests` | Kiểm thử giao tiếp health bằng Vitest |
-| `docs` | Phạm vi, luật và hướng dẫn phát triển |
+| src/frontend | Vue, API/SignalR client, bàn cờ, video và replay |
+| src/backend/GameCoTuong.Api | REST/Hub, danh tính, log và lỗi |
+| src/backend/GameCoTuong.Infrastructure | GameService, EF Core, migration và worker |
+| src/backend/GameCoTuong.Engine | Bộ luật, bàn cờ, Minimax/Alpha-Beta |
+| src/backend/GameCoTuong.Domain / Application | Entity/value object và hợp đồng |
+| tests/backend, src/frontend/tests | Kiểm thử tự động |
 
-## Kiểm tra trước khi mở PR
+[Phạm vi](docs/requirements.md), [luật](docs/rules.md), [ERD](docs/database/erd.md), [video và giới hạn](docs/sprint3.md), [giới hạn WXF](docs/repetition-scope.md), [CI](docs/ci.md).
 
-Từ thư mục gốc:
-
-```sh
-dotnet restore GameCoTuong.sln --locked-mode -m:1
-dotnet build GameCoTuong.sln -c Release --no-restore -m:1 -p:UseSharedCompilation=false
-dotnet test GameCoTuong.sln -c Release --no-build --no-restore -m:1
-npm --prefix src/frontend ci
-npm --prefix src/frontend run lint
-npm --prefix src/frontend run build
-npm --prefix src/frontend test
-```
-
-Hoặc chạy `./scripts/verify.sh` trên Bash, `./scripts/verify.ps1` trên PowerShell. Xem [hướng dẫn phát triển](docs/development.md) để đổi cổng, cấu hình, cập nhật lockfile và tạo nhánh. Xem [bàn giao GCT-21](docs/GCT-21-handover.md) để đối chiếu tiêu chí Jira.
-
-PR vào `develop`/`main` được [GCT CI](.github/workflows/ci.yml) build và kiểm thử tự động; mở **Checks** để xem bước lỗi và tải báo cáo. Xem [hướng dẫn CI](docs/ci.md) và [bàn giao GCT-23](docs/GCT-23-handover.md).
-
-## Tài liệu và quy trình nhóm
-
-- [GCT-19 — phạm vi và nghiệm thu](docs/requirements.md), [luật và giới hạn](docs/rules.md).
-- GCT-15 và GCT-20 đã có ở nhánh `feature/GCT-15-project-foundation`; tại thời điểm tạo GCT-21, các tài liệu đó chưa được tích hợp vào `main`/`develop`. Xem [kiến trúc GCT-20](https://github.com/vle2362005-collab/Game-Co-Tuong/blob/81f65ca67af35adff8c0dbb4d82e7953a3b9b4e0/docs/architecture.md) và [hợp đồng](https://github.com/vle2362005-collab/Game-Co-Tuong/blob/81f65ca67af35adff8c0dbb4d82e7953a3b9b4e0/docs/contracts.md) tại commit đã bàn giao.
-- `main`: bản ổn định; `develop`: nơi nhận thay đổi qua PR; `feature/GCT-<mã>-<nội-dung>`: từng công việc. Sau khi PR GCT-21 được merge, thành viên cập nhật `develop` rồi mới tách nhánh.
-- Trưởng nhóm duyệt và merge. Xem [cách làm việc và mở PR](CONTRIBUTING.md), [quy ước Jira](docs/jira-workflow.md), [rà soát GCT-22](docs/GCT-22-audit.md), [cấu hình bảo vệ nhánh](.github/rulesets/README.md) và [CI GCT-23](docs/ci.md).
-
-## Bản tích hợp Sprint 3
-
-Xem [hướng dẫn chạy, video call và đối chiếu các thẻ](docs/sprint3.md).
-
-S4 đến GCT-82: [đối chiếu 9 thẻ và kết quả kiểm thử](docs/sprint4-core.md).
+Tách nhánh có mã Jira, mở PR vào `develop`, gắn PR/code/kiểm thử trong description. Trưởng nhóm review và merge; `main` nhận bản ổn định qua PR. [Quy trình](CONTRIBUTING.md), [Jira](docs/jira-workflow.md), [bảo vệ nhánh](.github/rulesets/README.md).

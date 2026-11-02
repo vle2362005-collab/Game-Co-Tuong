@@ -1,0 +1,74 @@
+{
+  "date": "2026-11-03",
+  "sourceBase": "7fb3b66 + closeout PR changes",
+  "backend": {
+    "total": "290",
+    "executed": "290",
+    "passed": "290",
+    "failed": "0",
+    "error": "0",
+    "timeout": "0",
+    "aborted": "0",
+    "inconclusive": "0",
+    "passedButRunAborted": "0",
+    "notRunnable": "0",
+    "notExecuted": "0",
+    "disconnected": "0",
+    "warning": "0",
+    "completed": "0",
+    "inProgress": "0",
+    "pending": "0"
+  },
+  "frontend": {
+    "passed": 79,
+    "failed": 0,
+    "files": 10,
+    "checks": [
+      "lint",
+      "typecheck",
+      "production build"
+    ]
+  },
+  "selectedBackendCases": [
+    {
+      "test": "GameCoTuong.Foundation.Tests.CoreApiAcceptanceTests.GCT94_pvp_capture_reconnect_finish_close_and_read_only_replay",
+      "outcome": "Passed"
+    },
+    {
+      "test": "GameCoTuong.Foundation.Tests.GameFlowTests.Reconnect_racing_recovery_cleanup_cannot_resurrect_an_expired_match",
+      "outcome": "Passed"
+    },
+    {
+      "test": "GameCoTuong.Foundation.Tests.GameFlowTests.Save_failure_rolls_back_move_board_and_turn",
+      "outcome": "Passed"
+    },
+    {
+      "test": "GameCoTuong.Foundation.Tests.CoreApiAcceptanceTests.GCT115_invalid_requests_leave_board_turn_history_and_notifications_unchanged",
+      "outcome": "Passed"
+    },
+    {
+      "test": "GameCoTuong.Foundation.Tests.CoreApiAcceptanceTests.GCT115_duplicate_and_distinct_concurrent_commands_save_one_ply",
+      "outcome": "Passed"
+    },
+    {
+      "test": "GameCoTuong.Foundation.Tests.PerformanceAcceptanceTests.GCT97_ten_rooms_and_AI_emit_measured_median_and_p95",
+      "outcome": "Passed"
+    },
+    {
+      "test": "GameCoTuong.Foundation.Tests.GameFlowTests.GCT78_restart_during_disconnect_cancels_if_only_one_player_returns",
+      "outcome": "Passed"
+    },
+    {
+      "test": "GameCoTuong.Foundation.Tests.GameFlowTests.Chat_rate_limit_does_not_change_match_state_or_block_moves_and_result",
+      "outcome": "Passed"
+    },
+    {
+      "test": "GameCoTuong.Foundation.Tests.CoreApiAcceptanceTests.GCT115_save_failure_sends_no_success_and_leaves_both_snapshots_unchanged",
+      "outcome": "Passed"
+    }
+  ],
+  "limits": [
+    "SQLite isolated tests; no live SQL Server",
+    "HTTP in-process and simulated media; no new real-device/LAN/TURN validation"
+  ]
+}

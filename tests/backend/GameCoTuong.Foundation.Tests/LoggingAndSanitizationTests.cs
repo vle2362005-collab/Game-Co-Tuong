@@ -13,6 +13,26 @@ namespace GameCoTuong.Foundation.Tests;
 public sealed class LoggingAndSanitizationTests
 {
     [Fact]
+    public void GCT80_redacts_all_query_credentials_quoted_secrets_and_video_payloads()
+    {
+        var url = LogSanitizer.SanitizeUrl("/hubs/game?access_token=first-secret&token=second-secret&password=third-secret&roomId=room-1");
+        Assert.DoesNotContain("first-secret", url);
+        Assert.DoesNotContain("second-secret", url);
+        Assert.DoesNotContain("third-secret", url);
+        Assert.Contains("roomId=room-1", url);
+        var credentials = LogSanitizer.SanitizeMessage("credential=\"TURN with spaces\" connectionString='Server=test;Password=hidden value' requestId=123");
+        Assert.DoesNotContain("TURN with spaces", credentials);
+        Assert.DoesNotContain("Server=test", credentials);
+        Assert.DoesNotContain("hidden value", credentials);
+        Assert.Contains("requestId=123", credentials);
+        var video = LogSanitizer.SanitizeMessage("RoomId=room-1 sdp=v=0\r\na=ice-pwd:private-ice\r\na=candidate:private-network");
+        Assert.Contains("RoomId=room-1", video);
+        Assert.DoesNotContain("private-ice", video);
+        Assert.DoesNotContain("private-network", video);
+        Assert.DoesNotContain("v=0", video);
+    }
+
+    [Fact]
     public async Task Game_api_logs_trace_request_error_and_status_without_credentials()
     {
         var logs = new CaptureLogs();

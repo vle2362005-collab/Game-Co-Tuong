@@ -1,11 +1,14 @@
 using System.Text.Json;
 using GameCoTuong.Application.Game;
 using GameCoTuong.Domain.Entities;
+using GameCoTuong.Domain.Enums;
+using GameCoTuong.Domain.ValueObjects;
 using GameCoTuong.Infrastructure.Game;
 using GameCoTuong.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using GameCoTuong.Engine.Serialization;
 using GameCoTuong.Engine.Model;
+using GameCoTuong.Engine.Rules;
 using GameCoTuong.Api.Hubs;
 
 namespace GameCoTuong.Foundation.Tests;
@@ -32,6 +35,147 @@ public sealed class GameFlowTests : IDisposable
         room = await Run(s => s.Start(room.Id,red,new(Guid.NewGuid())));
         return (room,room.MatchId!.Value);
     }
+    private static Piece P(string id, PieceType type, Side side, int col, int row) => new(id, type, side, new(col, row));
+    private static string PositionKey(Board board, Side sideToMove) =>
+        $"{sideToMove}|" + string.Join("|", board.OrderBy(p => p.Type).ThenBy(p => p.Side)
+            .ThenBy(p => p.Position.Col).ThenBy(p => p.Position.Row)
+            .Select(p => $"{p.Type}:{p.Side}:{p.Position.Col}:{p.Position.Row}"));
+
+    private async Task<IReadOnlyList<Board>> PlaySequence(
+        Guid matchId,
+        Board initial,
+        params (string PieceId, Side Side, int Col, int Row)[] moves)
+    {
+        var initialJson = BoardSerializer.Serialize(initial);
+        await using (var db = Db())
+        {
+            var match = await db.Matches.SingleAsync(m => m.Id == matchId);
+            match.InitialBoardJson = initialJson;
+            match.CurrentBoardJson = initialJson;
+            match.SideToMove = "red";
+            match.MoveNumber = 0;
+            match.Version = 1;
+            await db.SaveChangesAsync();
+        }
+
+        var boards = new List<Board> { initial };
+        foreach (var next in moves)
+        {
+            await using var db = Db();
+            var match = await db.Matches.AsNoTracking().SingleAsync(m => m.Id == matchId);
+            Assert.Equal(next.Side.ToString().ToLowerInvariant(), match.SideToMove);
+            var board = BoardSerializer.Deserialize(match.CurrentBoardJson);
+            var legalMove = new LegalMove(next.PieceId, new(next.Col, next.Row));
+            Assert.True(XiangqiRules.IsLegal(board, next.Side, legalMove),
+                $"Expected legal move: {next.Side} {next.PieceId} to {next.Col},{next.Row}");
+
+            var playerId = next.Side == Side.Red ? red : black;
+            await Run(s => s.Move(matchId, playerId,
+                new MoveInput(Guid.NewGuid(), match.Version, next.PieceId, next.Col, next.Row)));
+
+            await using var afterDb = Db();
+            var after = await afterDb.Matches.AsNoTracking().SingleAsync(m => m.Id == matchId);
+            boards.Add(BoardSerializer.Deserialize(after.CurrentBoardJson));
+        }
+
+        return boards;
+    }
+
+    private async Task AssertRepeatedMatchContinues(Guid matchId, Board initial, IReadOnlyList<Board> positions)
+    {
+        var initialKey = PositionKey(initial, Side.Red);
+        Assert.Equal(3, positions.Select((board, index) =>
+                PositionKey(board, index % 2 == 0 ? Side.Red : Side.Black))
+            .Count(key => key == initialKey));
+
+        await using var db = Db();
+        var match = await db.Matches.AsNoTracking().SingleAsync(m => m.Id == matchId);
+        var moves = await db.Moves.AsNoTracking().Where(m => m.MatchId == matchId).OrderBy(m => m.Ply).ToListAsync();
+        Assert.Equal("playing", match.Status);
+        Assert.Equal("red", match.SideToMove);
+        Assert.Null(match.Winner);
+        Assert.Null(match.ResultReason);
+        Assert.Equal(moves.Count, match.MoveNumber);
+
+        var replay = BoardSerializer.Deserialize(match.InitialBoardJson);
+        foreach (var move in moves)
+            replay = replay.ApplyMove(move.PieceId, new(move.ToCol, move.ToRow), out _);
+        Assert.Equal(PositionKey(replay, Side.Red), PositionKey(BoardSerializer.Deserialize(match.CurrentBoardJson), Side.Red));
+    }
+
+    [Fact]
+    public async Task GCT112_three_occurrences_of_same_position_do_not_auto_draw()
+    {
+        var (_, matchId) = await Start();
+        var board = new Board(new[]
+        {
+            P("red-general-1", PieceType.General, Side.Red, 5, 9),
+            P("black-general-1", PieceType.General, Side.Black, 3, 0),
+            P("red-chariot-1", PieceType.Chariot, Side.Red, 0, 8),
+            P("black-chariot-1", PieceType.Chariot, Side.Black, 8, 1)
+        });
+        var positions = await PlaySequence(matchId, board,
+            ("red-chariot-1", Side.Red, 0, 7), ("black-chariot-1", Side.Black, 8, 2),
+            ("red-chariot-1", Side.Red, 0, 8), ("black-chariot-1", Side.Black, 8, 1),
+            ("red-chariot-1", Side.Red, 0, 7), ("black-chariot-1", Side.Black, 8, 2),
+            ("red-chariot-1", Side.Red, 0, 8), ("black-chariot-1", Side.Black, 8, 1));
+
+        await AssertRepeatedMatchContinues(matchId, board, positions);
+    }
+
+    [Fact]
+    public async Task GCT112_repeated_check_sequence_is_legal_but_not_adjudicated()
+    {
+        var (_, matchId) = await Start();
+        var board = new Board(new[]
+        {
+            P("red-general-1", PieceType.General, Side.Red, 5, 9),
+            P("black-general-1", PieceType.General, Side.Black, 4, 0),
+            P("red-chariot-1", PieceType.Chariot, Side.Red, 3, 1)
+        });
+        var moves = new (string PieceId, Side Side, int Col, int Row)[]
+        {
+            ("red-chariot-1", Side.Red, 4, 1), ("black-general-1", Side.Black, 3, 0),
+            ("red-chariot-1", Side.Red, 3, 1), ("black-general-1", Side.Black, 4, 0),
+            ("red-chariot-1", Side.Red, 4, 1), ("black-general-1", Side.Black, 3, 0),
+            ("red-chariot-1", Side.Red, 3, 1), ("black-general-1", Side.Black, 4, 0)
+        };
+        var positions = await PlaySequence(matchId, board, moves);
+
+        for (var index = 0; index < moves.Length; index += 2)
+            Assert.True(XiangqiRules.IsInCheck(positions[index + 1], Side.Black));
+        await AssertRepeatedMatchContinues(matchId, board, positions);
+    }
+
+    [Fact]
+    public async Task GCT112_repeated_attack_on_same_piece_is_not_classified_as_chase()
+    {
+        var (_, matchId) = await Start();
+        var board = new Board(new[]
+        {
+            P("red-general-1", PieceType.General, Side.Red, 5, 9),
+            P("black-general-1", PieceType.General, Side.Black, 3, 0),
+            P("red-chariot-1", PieceType.Chariot, Side.Red, 0, 6),
+            P("black-horse-1", PieceType.Horse, Side.Black, 1, 2)
+        });
+        var moves = new (string PieceId, Side Side, int Col, int Row)[]
+        {
+            ("red-chariot-1", Side.Red, 1, 6), ("black-horse-1", Side.Black, 0, 4),
+            ("red-chariot-1", Side.Red, 0, 6), ("black-horse-1", Side.Black, 1, 2),
+            ("red-chariot-1", Side.Red, 1, 6), ("black-horse-1", Side.Black, 0, 4),
+            ("red-chariot-1", Side.Red, 0, 6), ("black-horse-1", Side.Black, 1, 2)
+        };
+        var positions = await PlaySequence(matchId, board, moves);
+
+        for (var index = 0; index < moves.Length; index += 2)
+        {
+            var attacked = positions[index + 1];
+            var horse = attacked.GetPieceById("black-horse-1")!;
+            Assert.True(XiangqiRules.IsLegal(attacked, Side.Red, new("red-chariot-1", horse.Position)));
+        }
+        await AssertRepeatedMatchContinues(matchId, board, positions);
+    }
+
     [Fact] public async Task Create_retry_join_race_and_access_checks()
     {
         var input = new CreateRoomInput(Guid.NewGuid(),"Race room");
@@ -474,6 +618,101 @@ public sealed class GameFlowTests : IDisposable
         try { await Run(s => s.Leave(roomId, userId, close)); return true; }
         catch (GameFault) { return false; }
     }
+    [Fact] public async Task GCT79_start_racing_host_close_keeps_one_consistent_room_state()
+    {
+        var room = await Run(s => s.Create(red, new(Guid.NewGuid(), "Start or close")));
+        await Run(s => s.Join(black, room.Code));
+        await Run(s => s.Ready(room.Id, red, true));
+        await Run(s => s.Ready(room.Id, black, true));
+        async Task<bool> StartRoom()
+        {
+            try { await Run(s => s.Start(room.Id, red, new(Guid.NewGuid()))); return true; }
+            catch (GameFault fault) { Assert.Equal("ROOM_CLOSED", fault.Code); return false; }
+        }
+        var results = await Task.WhenAll(StartRoom(), Leave(room.Id, red, true));
+        Assert.Single(results, result => result);
+        await using var db = Db();
+        var saved = await db.Rooms.SingleAsync(r => r.Id == room.Id);
+        var active = await db.Matches.CountAsync(m => m.RoomId == room.Id && (m.Status == "playing" || m.Status == "paused"));
+        Assert.Equal(saved.Status == "closed" ? 0 : 1, active);
+        Assert.Equal(saved.Status == "closed" ? 0 : 2,
+            await db.RoomMemberships.CountAsync(m => m.RoomId == room.Id && m.LeftAt == null));
+    }
+
+    [Fact] public async Task GCT79_close_racing_cleanup_keeps_history_and_releases_seats_once()
+    {
+        var (room, id) = await Start();
+        await Run(s => s.Move(id, red, new(Guid.NewGuid(), 1, "red-soldier-1", 0, 5)));
+        await Run(s => s.Surrender(id, black, true));
+        await using (var db = Db())
+        {
+            (await db.Matches.SingleAsync(m => m.Id == id)).EndedAt = DateTimeOffset.UtcNow.AddMinutes(-6);
+            await db.SaveChangesAsync();
+        }
+        var before = JsonSerializer.Serialize(await Run(s => s.MatchDetails(id, red)));
+        await Task.WhenAll((Task)Leave(room.Id, red, true), Run(s => s.CleanupRooms()));
+        Assert.Empty(await Run(s => s.CleanupRooms()));
+        Assert.Equal(before, JsonSerializer.Serialize(await Run(s => s.MatchDetails(id, red))));
+        await using var verify = Db();
+        Assert.Equal("closed", (await verify.Rooms.SingleAsync(r => r.Id == room.Id)).Status);
+        Assert.Equal(0, await verify.RoomMemberships.CountAsync(m => m.RoomId == room.Id && m.LeftAt == null));
+        Assert.Single(await verify.Moves.Where(m => m.MatchId == id).ToListAsync());
+    }
+
+    [Fact] public async Task GCT78_restart_during_disconnect_cancels_if_only_one_player_returns()
+    {
+        var (room, id) = await Start();
+        await Run(s => s.Move(id, red, new(Guid.NewGuid(), 1, "red-soldier-1", 0, 5)));
+        await Run(s => s.Presence(room.Id, black, false));
+        await Run(s => s.RecoverAfterRestart());
+        await Run(s => s.Reconnect(id, red));
+        await using (var db = Db())
+        {
+            var match = await db.Matches.SingleAsync(m => m.Id == id);
+            Assert.Equal("serverRestart", match.RecoveryReason);
+            Assert.Equal("paused", match.Status);
+            match.BlackDeadlineAt = DateTimeOffset.UtcNow.AddMilliseconds(-1);
+            await db.SaveChangesAsync();
+        }
+        Assert.Equal(1, await Run(s => s.ExpireRecoveries()));
+        await using var verify = Db();
+        var result = await verify.Matches.SingleAsync(m => m.Id == id);
+        Assert.Equal("cancelled", result.Status);
+        Assert.Equal("serverRestart", result.ResultReason);
+        Assert.Null(result.Winner);
+        Assert.Single(await verify.Moves.Where(m => m.MatchId == id).ToListAsync());
+    }
+
+    [Fact] public async Task GCT116_cleanup_protects_playing_paused_and_recovery_windows()
+    {
+        var (room, id) = await Start();
+        await using (var db = Db())
+        {
+            (await db.Rooms.SingleAsync(r => r.Id == room.Id)).LastActivityAt = DateTimeOffset.UtcNow.AddHours(-1);
+            await db.SaveChangesAsync();
+        }
+        Assert.Empty(await Run(s => s.CleanupRooms()));
+        await Run(s => s.Presence(room.Id, black, false));
+        Assert.Empty(await Run(s => s.CleanupRooms()));
+
+        var waiting = await Run(s => s.Create(outsider, new(Guid.NewGuid(), "Protected waiting room")));
+        await using (var db = Db())
+        {
+            (await db.Rooms.SingleAsync(r => r.Id == waiting.Id)).LastActivityAt = DateTimeOffset.UtcNow.AddMinutes(-16);
+            (await db.RoomMemberships.SingleAsync(m => m.RoomId == waiting.Id)).ReconnectDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(1);
+            await db.SaveChangesAsync();
+        }
+        Assert.Empty(await Run(s => s.CleanupRooms()));
+        await using (var db = Db())
+        {
+            (await db.RoomMemberships.SingleAsync(m => m.RoomId == waiting.Id)).ReconnectDeadlineAt = DateTimeOffset.UtcNow.AddSeconds(-1);
+            await db.SaveChangesAsync();
+        }
+        Assert.Equal(waiting.Id, Assert.Single(await Run(s => s.CleanupRooms())).Id);
+        await using var verify = Db();
+        Assert.Equal("paused", (await verify.Matches.SingleAsync(m => m.Id == id)).Status);
+    }
+
     [Fact] public async Task Save_failure_rolls_back_move_board_and_turn()
     {
         var (_,id)=await Start();
@@ -615,7 +854,7 @@ public sealed class GameFlowTests : IDisposable
         await using(var db=Db())
         {
             var match=await db.Matches.SingleAsync(m=>m.Id==id);
-            Assert.Equal("disconnect",match.RecoveryReason);
+            Assert.Equal("serverRestart",match.RecoveryReason);
             Assert.Equal(blackDeadline,match.BlackDeadlineAt);
             Assert.True(match.RedDeadlineAt>DateTimeOffset.UtcNow);
             Assert.False(await db.RoomMemberships.Where(m=>m.RoomId==room.Id && m.LeftAt==null).AnyAsync(m=>m.IsConnected));
@@ -692,10 +931,43 @@ public sealed class GameFlowTests : IDisposable
         var room=await Run(s=>s.Create(red,new(Guid.NewGuid(),"Chat")));
         var input=new ChatInput(Guid.NewGuid(),"<script>literal text</script>");
         var message=await Run(s=>s.Chat(room.Id,red,input)); var retry=await Run(s=>s.Chat(room.Id,red,input)); Assert.Equal(message.Id,retry.Id);
+        Assert.Equal("<script>literal text</script>",message.Content);
         await Assert.ThrowsAsync<GameFault>(()=>Run(s=>s.Chat(room.Id,outsider,input)));
+        Assert.Equal("VALIDATION_ERROR",(await Assert.ThrowsAsync<GameFault>(()=>Run(s=>s.Chat(room.Id,red,new(Guid.NewGuid(),"  "))))).Code);
+        Assert.Equal("VALIDATION_ERROR",(await Assert.ThrowsAsync<GameFault>(()=>Run(s=>s.Chat(room.Id,red,new(Guid.NewGuid(),new string('x',501)))))).Code);
         for(int i=0;i<4;i++) await Run(s=>s.Chat(room.Id,red,new(Guid.NewGuid(),$"Message {i}")));
         Assert.Equal("RATE_LIMITED",(await Assert.ThrowsAsync<GameFault>(()=>Run(s=>s.Chat(room.Id,red,new(Guid.NewGuid(),"Sixth"))))).Code);
-        Assert.Equal(5,(await Run(s=>s.Messages(room.Id,red))).Count);
+        var messages=await Run(s=>s.Messages(room.Id,red));
+        Assert.Equal(5,messages.Count);
+        Assert.Equal("<script>literal text</script>",messages[0].Content);
+    }
+    [Fact] public async Task Chat_rate_limit_does_not_change_match_state_or_block_moves_and_result()
+    {
+        var (room,matchId)=await Start();
+        for(var i=0;i<5;i++)
+            await Run(s=>s.Chat(room.Id,red,new(Guid.NewGuid(),$"Message {i}")));
+
+        var rateLimited=await Assert.ThrowsAsync<GameFault>(()=>
+            Run(s=>s.Chat(room.Id,red,new(Guid.NewGuid(),"Too fast"))));
+        Assert.Equal("RATE_LIMITED",rateLimited.Code);
+
+        await using(var db=Db())
+        {
+            var unchanged=await db.Matches.AsNoTracking().SingleAsync(m=>m.Id==matchId);
+            Assert.Equal("playing",unchanged.Status);
+            Assert.Equal(0,unchanged.MoveNumber);
+            Assert.Null(unchanged.Winner);
+        }
+
+        await Run(s=>s.Move(matchId,red,new(Guid.NewGuid(),1,"red-soldier-1",0,5)));
+        await Run(s=>s.End(matchId,black,false));
+
+        await using var verify=Db();
+        var final=await verify.Matches.AsNoTracking().SingleAsync(m=>m.Id==matchId);
+        Assert.Equal("finished",final.Status);
+        Assert.Equal("red",final.Winner);
+        Assert.Equal("resignation",final.ResultReason);
+        Assert.Single(await verify.Moves.Where(m=>m.MatchId==matchId).ToListAsync());
     }
     [Fact] public void Video_session_blocks_wrong_ids_wrong_answerer_and_stale_ice()
     {
