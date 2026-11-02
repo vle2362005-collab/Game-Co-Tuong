@@ -2,10 +2,10 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuth } from '../composables/useAuth'
-import { pveApi, type PveMatch, type Difficulty } from '../api/pve'
+import { pveApi } from '../api/pve'
+import type { PveMatch, Difficulty } from '../api/pve'
 import XiangqiBoard from './XiangqiBoard.vue'
 
-// ── state ──────────────────────────────────────────────────────────────────
 const router = useRouter()
 const auth = useAuth()
 
@@ -17,54 +17,59 @@ const error = ref('')
 const busy = ref(false)
 const botThinking = ref(false)
 let offSignalR: (() => void) | null = null
+let botTimer: number | null = null
 
-// ── computed ───────────────────────────────────────────────────────────────
+// ── Computed ─────────────────────────────────────────────────────────────────
+
 const destinations = computed(() => {
   if (!match.value || match.value.sideToMove !== 'red' || busy.value) return []
-  return (match.value.legalMoves || [])
-    .filter(m => m.pieceId === selected.value)
-    .map(m => m.to)
+  const pieceId = selected.value
+  if (!pieceId) return []
+  return match.value.legalMoves.filter(m => m.pieceId === pieceId).map(m => m.to)
 })
 
-const checkedGeneralId = computed(() => {
+const checkedGeneralId = computed((): string | null => {
   if (!match.value?.check) return null
-  return match.value.pieces.find(p =>
-    p.type.toLowerCase() === 'general' && p.side.toLowerCase() === match.value!.sideToMove
-  )?.id ?? null
+  const m = match.value
+  const general = m.pieces.find(
+    p => p.type.toLowerCase() === 'general' && p.side.toLowerCase() === m.sideToMove
+  )
+  return general?.id ?? null
 })
 
-const canMove = computed(() =>
-  !!match.value &&
-  match.value.status === 'playing' &&
-  match.value.sideToMove === 'red' &&
-  !busy.value &&
-  !botThinking.value
+const canMove = computed(
+  () => !!match.value && match.value.status === 'playing'
+        && match.value.sideToMove === 'red' && !busy.value && !botThinking.value
 )
 
-const resultLabel = computed(() => {
+const resultLabel = computed((): string => {
   const r = match.value?.result
   if (!r) return ''
-  const outcome = ({ 'red-win': '🏆 Bạn thắng!', 'black-win': '🤖 Máy thắng!', draw: '🤝 Hòa!' } as Record<string, string>)[r.outcome] ?? 'Kết thúc'
-  const reasonMap: Record<string, string> = {
-    surrender: 'đầu hàng', checkmate: 'chiếu bí', stalemate: 'hết nước đi', 'draw-agreement': 'thỏa thuận hòa'
+  const outcomes: Record<string, string> = {
+    'red-win': '🏆 Bạn thắng!', 'black-win': '🤖 Máy thắng!', draw: '🤝 Hòa!'
   }
-  const reason = reasonMap[r.reasonCode] ?? r.reasonCode
+  const reasons: Record<string, string> = {
+    surrender: 'đầu hàng', resignation: 'đầu hàng',
+    checkmate: 'chiếu bí', stalemate: 'hết nước đi', 'draw-agreement': 'thỏa thuận hòa'
+  }
+  const outcome = outcomes[r.outcome] ?? 'Kết thúc'
+  const rc = r.reasonCode ?? ''
+  const reason = reasons[rc] ?? rc
   return `${outcome} · ${reason}`
 })
 
-const difficultyLabel = computed(() => {
+const difficultyLabel = computed((): string => {
   const labels: Record<Difficulty, string> = { easy: '😊 Dễ', medium: '🧠 Trung bình', hard: '🔥 Khó' }
   return labels[difficulty.value]
 })
 
-// ── actions ────────────────────────────────────────────────────────────────
-async function startGame() {
+// ── Actions ───────────────────────────────────────────────────────────────────
+
+async function startGame(): Promise<void> {
   busy.value = true; error.value = ''
   try {
-    const res = await pveApi.create(difficulty.value, crypto.randomUUID())
-    match.value = res
+    match.value = await pveApi.create(difficulty.value, crypto.randomUUID())
     phase.value = 'playing'
-    // Listen for bot moves pushed via SignalR
     offSignalR = auth.signalR.on('PvEMatchChanged', (payload: unknown) => {
       const next = payload as PveMatch
       if (next?.id === match.value?.id && next.version > (match.value?.version ?? 0)) {
@@ -73,95 +78,93 @@ async function startGame() {
         if (next.result) phase.value = 'finished'
       }
     })
-    if (!auth.signalR.isConnected.value) await auth.signalR.connect()
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Không thể tạo trận. Thử lại.'
   } finally { busy.value = false }
 }
 
-async function cell(col: number, row: number) {
+function handleCell(col: number, row: number): void {
   if (!canMove.value || !match.value) return
   const piece = match.value.pieces.find(p => p.position.col === col && p.position.row === row)
-  // Select own piece
   if (piece?.side.toLowerCase() === 'red') {
     selected.value = selected.value === piece.id ? null : piece.id
     error.value = ''
     return
   }
   if (!selected.value) return
-  // Validate legal move
-  const isLegal = match.value.legalMoves?.some(
+  const isLegal = match.value.legalMoves.some(
     m => m.pieceId === selected.value && m.to.col === col && m.to.row === row
   )
   if (!isLegal) { error.value = 'Nước đi không hợp lệ.'; return }
+  void doMove(selected.value, col, row)
+}
 
+async function doMove(pieceId: string, toCol: number, toRow: number): Promise<void> {
+  if (!match.value) return
   error.value = ''
   busy.value = true
   botThinking.value = true
-  const pieceId = selected.value
   selected.value = null
   try {
-    const res = await pveApi.move(
-      match.value.id, pieceId, col, row,
+    match.value = await pveApi.move(
+      match.value.id, pieceId, toCol, toRow,
       match.value.version, crypto.randomUUID(), difficulty.value
     )
-    match.value = res
-    if (res.result) { phase.value = 'finished'; botThinking.value = false }
-    // botThinking stays true until SignalR pushes the bot move (or timeout below)
+    if (match.value.result) { phase.value = 'finished'; botThinking.value = false }
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Lỗi gửi nước đi.'
     botThinking.value = false
   } finally { busy.value = false }
 }
 
-async function surrender() {
+async function surrender(): Promise<void> {
   if (!match.value || !window.confirm('Bạn xác nhận đầu hàng?')) return
   busy.value = true; error.value = ''
   try {
-    const res = await pveApi.surrender(match.value.id)
-    match.value = res
+    match.value = await pveApi.surrender(match.value.id)
     phase.value = 'finished'
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Lỗi đầu hàng.'
   } finally { busy.value = false }
 }
 
-async function refresh() {
+async function refresh(): Promise<void> {
   if (!match.value) return
   try {
-    const res = await pveApi.match(match.value.id)
-    match.value = res
+    match.value = await pveApi.match(match.value.id)
     botThinking.value = false
-    if (res.result) phase.value = 'finished'
-  } catch { /* silent */ }
+    if (match.value.result) phase.value = 'finished'
+  } catch { /* silent fallback */ }
 }
 
-function backToLobby() { void router.push('/lobby') }
-function playAgain() { phase.value = 'select'; match.value = null; selected.value = null; error.value = '' }
+function backToLobby(): void { void router.push('/lobby') }
+function playAgain(): void { phase.value = 'select'; match.value = null; selected.value = null; error.value = '' }
+function doRefresh(): void { void refresh() }
 
-// Fallback polling: if SignalR bot move not received within 12s, poll manually
-let botTimeout: number | null = null
-function scheduleBotTimeout() {
-  if (botTimeout !== null) window.clearTimeout(botTimeout)
-  if (botThinking.value) {
-    botTimeout = window.setTimeout(() => { void (async () => { if (botThinking.value) await refresh() })() }, 12000)
-  }
+// Fallback: if bot SignalR push not received in 12s, poll once
+function startBotTimer(): void {
+  stopBotTimer()
+  botTimer = window.setTimeout(doRefresh, 12000)
 }
-watch(botThinking, val => { if (val) scheduleBotTimeout(); else { if (botTimeout !== null) window.clearTimeout(botTimeout) } })
+function stopBotTimer(): void {
+  if (botTimer !== null) { window.clearTimeout(botTimer); botTimer = null }
+}
 
-onMounted(async () => {
-  if (!auth.signalR.isConnected.value) await auth.signalR.connect()
+watch(botThinking, (val) => { if (val) startBotTimer(); else stopBotTimer() })
+
+onMounted((): void => {
+  if (!auth.signalR.isConnected.value) void auth.signalR.connect()
 })
-onUnmounted(() => { offSignalR?.(); if (botTimeout !== null) window.clearTimeout(botTimeout) })
+onUnmounted((): void => { offSignalR?.(); stopBotTimer() })
 </script>
 
 <template>
   <section class="bot-game">
-    <!-- ── Phase: SELECT DIFFICULTY ── -->
+    <!-- ── SELECT DIFFICULTY ── -->
     <div v-if="phase === 'select'" class="select-screen">
       <div class="select-card">
         <div class="select-header">
-          <button class="btn-back" @click="backToLobby">← Sảnh</button>
+          <button class="btn-back" @click="backToLobby()">← Sảnh</button>
           <h1>🤖 Chơi với Máy</h1>
           <p class="subtitle">Người cầm <span class="side-red">Đỏ</span> · Máy cầm <span class="side-black">Đen</span></p>
         </div>
@@ -184,31 +187,33 @@ onUnmounted(() => { offSignalR?.(); if (botTimeout !== null) window.clearTimeout
         </div>
 
         <p v-if="error" role="alert" class="error">{{ error }}</p>
-        <button class="btn-start" :disabled="busy" @click="startGame" id="bot-start-btn">
+        <button class="btn-start" :disabled="busy" @click="startGame()" id="bot-start-btn">
           <span v-if="busy">Đang tạo trận…</span>
           <span v-else>▶ Bắt đầu</span>
         </button>
       </div>
     </div>
 
-    <!-- ── Phase: PLAYING ── -->
+    <!-- ── PLAYING ── -->
     <div v-else-if="phase === 'playing' && match" class="play-screen">
       <div class="game-header">
         <div class="header-left">
           <span class="badge-mode">🤖 vs Máy · {{ difficultyLabel }}</span>
           <span v-if="match.sideToMove === 'red'" class="turn-indicator red">Lượt của bạn ♟</span>
           <span v-else class="turn-indicator black">
-            <span v-if="botThinking" class="thinking-dots">Máy đang suy nghĩ<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span></span>
+            <span v-if="botThinking" class="thinking-dots">
+              Máy đang suy nghĩ<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span>
+            </span>
             <span v-else>Lượt máy 🤖</span>
           </span>
           <strong v-if="match.check" class="check-alert">⚠ Chiếu Tướng!</strong>
         </div>
-        <div class="header-right">
-          <span class="move-count">Nước {{ match.moveNumber }}</span>
-        </div>
+        <span class="move-count">Nước {{ match.moveNumber }}</span>
       </div>
 
-      <p v-if="error" role="alert" class="error">{{ error }} <button @click="refresh">Tải lại</button></p>
+      <p v-if="error" role="alert" class="error">
+        {{ error }} <button @click="doRefresh()">Tải lại</button>
+      </p>
 
       <div class="board-wrapper">
         <XiangqiBoard
@@ -219,26 +224,23 @@ onUnmounted(() => { offSignalR?.(); if (botTimeout !== null) window.clearTimeout
           :destinations="destinations"
           :last-move="match.lastMove"
           :checked-general-id="checkedGeneralId"
-          @cell="cell"
+          @cell="handleCell"
         />
       </div>
 
       <div class="controls">
-        <button class="btn-surrender" :disabled="busy || botThinking" @click="surrender" id="bot-surrender-btn">
+        <button class="btn-surrender" :disabled="busy || botThinking" @click="surrender()" id="bot-surrender-btn">
           🏳 Đầu hàng
         </button>
-        <button class="btn-refresh" :disabled="busy" @click="refresh">
-          🔄 Đồng bộ
-        </button>
+        <button class="btn-refresh" :disabled="busy" @click="doRefresh()">🔄 Đồng bộ</button>
       </div>
-
       <div class="legend">
         <span class="legend-you">■ Bạn (Đỏ)</span>
         <span class="legend-bot">■ Máy (Đen)</span>
       </div>
     </div>
 
-    <!-- ── Phase: FINISHED ── -->
+    <!-- ── FINISHED ── -->
     <div v-else-if="phase === 'finished' && match" class="result-screen">
       <div class="result-card">
         <div class="result-emoji">
@@ -247,9 +249,8 @@ onUnmounted(() => { offSignalR?.(); if (botTimeout !== null) window.clearTimeout
         <h2 class="result-title">{{ resultLabel }}</h2>
         <p class="result-moves">Ván cờ kết thúc sau {{ match.moveNumber }} nước · {{ difficultyLabel }}</p>
         <div class="result-actions">
-          <button class="btn-start" @click="playAgain" id="bot-play-again-btn">🔁 Chơi lại</button>
-          <button class="btn-history" @click="router.push('/history')" id="bot-history-btn">📋 Xem lịch sử</button>
-          <button class="btn-back-lobby" @click="backToLobby" id="bot-lobby-btn">🏠 Về sảnh</button>
+          <button class="btn-start" @click="playAgain()" id="bot-play-again-btn">🔁 Chơi lại</button>
+          <button class="btn-history" @click="backToLobby()" id="bot-lobby-btn">🏠 Về sảnh</button>
         </div>
       </div>
     </div>
@@ -259,7 +260,6 @@ onUnmounted(() => { offSignalR?.(); if (botTimeout !== null) window.clearTimeout
 <style scoped>
 .bot-game { width: 100%; min-height: 60vh; display: flex; flex-direction: column; align-items: center; padding: 24px 16px; }
 
-/* ── SELECT ── */
 .select-screen { width: 100%; max-width: 520px; }
 .select-card { background: #fffef9; border: 1px solid #d6dcd0; border-radius: 20px; padding: 36px 32px; box-shadow: 0 4px 20px rgba(23,43,38,.07); }
 .select-header { text-align: center; margin-bottom: 28px; }
@@ -270,6 +270,7 @@ onUnmounted(() => { offSignalR?.(); if (botTimeout !== null) window.clearTimeout
 .btn-back { background: transparent; border: 1px solid #d6dcd0; border-radius: 8px; padding: 6px 12px; font-size: .82rem; color: #53625b; cursor: pointer; }
 .btn-back:hover { background: #eaf0e7; }
 
+.difficulty-group { margin-bottom: 8px; }
 .label { font-weight: 600; color: #172b26; margin-bottom: 12px; font-size: .9rem; }
 .difficulty-cards { display: flex; gap: 12px; margin-bottom: 28px; }
 .diff-card { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 16px 8px; border: 2px solid #d6dcd0; border-radius: 14px; background: #fbfaf6; cursor: pointer; transition: all .18s; }
@@ -283,7 +284,6 @@ onUnmounted(() => { offSignalR?.(); if (botTimeout !== null) window.clearTimeout
 .btn-start:hover:not(:disabled) { background: #7d3229; }
 .btn-start:disabled { opacity: .55; cursor: default; }
 
-/* ── PLAYING ── */
 .play-screen { width: 100%; max-width: 560px; }
 .game-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; padding: 12px 16px; background: #fffef9; border: 1px solid #e5ebe0; border-radius: 12px; }
 .header-left { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
@@ -294,8 +294,6 @@ onUnmounted(() => { offSignalR?.(); if (botTimeout !== null) window.clearTimeout
 .check-alert { color: #c0392b; font-size: .85rem; animation: pulse .7s infinite alternate; }
 @keyframes pulse { from { opacity: 1; } to { opacity: .5; } }
 .move-count { font-size: .78rem; color: #65746d; }
-
-/* Bot thinking dots */
 .thinking-dots .dot { display: inline-block; animation: blink 1.2s infinite; }
 .thinking-dots .dot:nth-child(2) { animation-delay: .4s; }
 .thinking-dots .dot:nth-child(3) { animation-delay: .8s; }
@@ -308,12 +306,10 @@ onUnmounted(() => { offSignalR?.(); if (botTimeout !== null) window.clearTimeout
 .btn-surrender:disabled { opacity: .5; cursor: default; }
 .btn-refresh { padding: 10px 16px; background: #fbfaf6; border: 1px solid #d6dcd0; border-radius: 10px; color: #53625b; cursor: pointer; font-size: .84rem; }
 .btn-refresh:hover { background: #eaf0e7; }
-
 .legend { display: flex; gap: 20px; justify-content: center; margin-top: 10px; font-size: .8rem; }
 .legend-you { color: #9b4036; font-weight: 600; }
 .legend-bot { color: #172b26; font-weight: 600; }
 
-/* ── FINISHED ── */
 .result-screen { width: 100%; max-width: 440px; display: flex; justify-content: center; }
 .result-card { background: #fffef9; border: 1px solid #d6dcd0; border-radius: 20px; padding: 44px 36px; text-align: center; box-shadow: 0 4px 24px rgba(23,43,38,.09); width: 100%; }
 .result-emoji { font-size: 3.5rem; margin-bottom: 12px; }
@@ -322,13 +318,9 @@ onUnmounted(() => { offSignalR?.(); if (botTimeout !== null) window.clearTimeout
 .result-actions { display: flex; flex-direction: column; gap: 12px; }
 .btn-history { padding: 12px; border: 1px solid #d6dcd0; border-radius: 12px; background: #fbfaf6; color: #53625b; font-size: .9rem; cursor: pointer; }
 .btn-history:hover { background: #eaf0e7; }
-.btn-back-lobby { padding: 12px; border: 1px solid #d6dcd0; border-radius: 12px; background: transparent; color: #65746d; font-size: .88rem; cursor: pointer; }
-.btn-back-lobby:hover { background: #f5f5f5; }
 
 .error { color: #a12525; font-size: .88rem; margin-bottom: 8px; }
 .error button { margin-left: 8px; padding: 4px 10px; font-size: .8rem; cursor: pointer; }
-
-.difficulty-group { margin-bottom: 8px; }
 
 @media (max-width: 480px) {
   .difficulty-cards { flex-direction: column; }
