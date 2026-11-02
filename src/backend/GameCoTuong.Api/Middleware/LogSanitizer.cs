@@ -4,7 +4,13 @@ public static class LogSanitizer
 {
     private const string Redacted = "[REDACTED]";
     private static readonly System.Text.RegularExpressions.Regex SensitiveValue = new(
-        """(?i)(["']?(?:password|passwd|pwd|token|access_token|refresh_token|authorization|secret|signingkey)["']?\s*[:=]\s*["']?)[^"'\s,;&}]+""",
+        """(?i)(["']?(?:password|passwd|pwd|token|access_token|refresh_token|authorization|secret|signingkey|credential|connectionstring|ice-pwd|ice-ufrag)["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;&}]+)""",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly System.Text.RegularExpressions.Regex JwtToken = new(
+        """\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+""",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly System.Text.RegularExpressions.Regex VideoPayload = new(
+        """(?is)(["']?(?:sdp|candidate|iceServers)["']?\s*[:=]).*""",
         System.Text.RegularExpressions.RegexOptions.Compiled);
     private static readonly System.Text.RegularExpressions.Regex BearerToken = new(
         """(?i)(Bearer\s+)[A-Za-z0-9._~+/-]+=*""",
@@ -14,23 +20,7 @@ public static class LogSanitizer
     {
         if (string.IsNullOrEmpty(url)) return string.Empty;
 
-        var tokenIndex = url.IndexOf("access_token=", StringComparison.OrdinalIgnoreCase);
-        if (tokenIndex == -1)
-        {
-            tokenIndex = url.IndexOf("token=", StringComparison.OrdinalIgnoreCase);
-            if (tokenIndex == -1) return url;
-        }
-
-        var equalIndex = url.IndexOf('=', tokenIndex);
-        if (equalIndex == -1) return url;
-
-        var nextAmpersand = url.IndexOf('&', equalIndex);
-        if (nextAmpersand == -1)
-        {
-            return url.Substring(0, equalIndex + 1) + Redacted;
-        }
-
-        return url.Substring(0, equalIndex + 1) + Redacted + url.Substring(nextAmpersand);
+        return SanitizeMessage(url);
     }
 
     public static string SanitizeAuthorizationHeader(string? headerValue)
@@ -49,31 +39,10 @@ public static class LogSanitizer
     {
         if (string.IsNullOrEmpty(message)) return string.Empty;
 
-        // Redact JWT pattern (starts with eyJ)
-        var result = message;
-        var eyJIndex = result.IndexOf("eyJ", StringComparison.Ordinal);
-        while (eyJIndex != -1)
-        {
-            var endIndex = eyJIndex;
-            while (endIndex < result.Length && !char.IsWhiteSpace(result[endIndex]) && result[endIndex] != '"' && result[endIndex] != '\'')
-            {
-                endIndex++;
-            }
-
-            var tokenLength = endIndex - eyJIndex;
-            // Only redact if it looks like a JWT segment (at least 20 chars)
-            if (tokenLength > 20)
-            {
-                result = result.Substring(0, eyJIndex) + Redacted + result.Substring(endIndex);
-            }
-            else
-            {
-                break;
-            }
-
-            eyJIndex = result.IndexOf("eyJ", eyJIndex + Redacted.Length, StringComparison.Ordinal);
-        }
-
+        // Discard the rest of an SDP-bearing exception: it may contain multiline
+        // network/device details. Correlation IDs are logged in separate fields.
+        var result = VideoPayload.Replace(message, $"$1{Redacted}");
+        result = JwtToken.Replace(result, Redacted);
         result = SensitiveValue.Replace(result, $"$1{Redacted}");
         return BearerToken.Replace(result, $"$1{Redacted}");
     }

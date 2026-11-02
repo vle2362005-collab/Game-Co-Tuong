@@ -179,9 +179,10 @@ public sealed class GameService(GameDbContext db, ILogger<GameService> logger)
         foreach (var match in matches)
         {
             CancelAiSearch(match.Id);
-            var wasWaitingForDisconnect = match.Status == "paused" && match.RecoveryReason == "disconnect";
             match.Status = "paused";
-            if (!wasWaitingForDisconnect) match.RecoveryReason = "serverRestart";
+            // A restart requires every player to authenticate again, including a match
+            // that was already paused. A missing player must not award a restart win.
+            match.RecoveryReason = "serverRestart";
             match.TurnStartedAt = null;
             match.DrawOfferId = null;
             match.DrawOfferedBy = null;
@@ -200,6 +201,8 @@ public sealed class GameService(GameDbContext db, ILogger<GameService> logger)
                 member.IsConnected = false;
                 member.IsReady = false;
             }
+            logger.LogInformation("Match paused after server restart. {RoomId} {MatchId} {ConnectionState}",
+                match.RoomId, match.Id, "waiting_reconnect");
         }
 
         return matches.Count;
@@ -276,6 +279,36 @@ public sealed class GameService(GameDbContext db, ILogger<GameService> logger)
                 expired.Add((match.Id, match.RoomId));
         }
         return expired;
+    });
+
+    public Task<IReadOnlyList<RoomView>> CleanupRooms() => Write<IReadOnlyList<RoomView>>(async () =>
+    {
+        var rooms = await db.Rooms.Include(r => r.Memberships).ThenInclude(m => m.User)
+            .Include(r => r.CurrentMatch).Where(r => r.Status != "closed").ToListAsync();
+        var now = DateTimeOffset.UtcNow;
+        var closed = new List<RoomView>();
+        foreach (var room in rooms)
+        {
+            // Never delete persisted matches, moves, receipts or an active recovery.
+            if (room.CurrentMatch?.Status is "playing" or "paused" ||
+                room.Memberships.Any(m => m.LeftAt is null && m.ReconnectDeadlineAt > now)) continue;
+            var expired = room.Status == "waiting" && now - room.LastActivityAt >= TimeSpan.FromMinutes(15) ||
+                room.Status == "finished" && room.CurrentMatch?.EndedAt is DateTimeOffset ended && now - ended >= TimeSpan.FromMinutes(5);
+            if (!expired) continue;
+            room.Status = "closed";
+            room.ClosedAt = now;
+            room.Version++;
+            foreach (var member in room.Memberships.Where(m => m.LeftAt is null))
+            {
+                member.LeftAt = now;
+                member.IsReady = member.IsConnected = false;
+                member.ReconnectDeadlineAt = null;
+            }
+            closed.Add(View(room));
+            logger.LogInformation("Expired room closed; match history retained. {RoomId} {MatchId} {ConnectionState}",
+                room.Id, room.CurrentMatchId, "closed");
+        }
+        return closed;
     });
 
     private static bool ExpireDrawOfferIfNeeded(Match match, DateTimeOffset now)
@@ -586,7 +619,7 @@ public sealed class GameService(GameDbContext db, ILogger<GameService> logger)
     {
         var room = await LoadRoom(roomId); var member = Member(room, userId);
         if (room.Status != "waiting") throw new GameFault("ROOM_PLAYING", "Trận đã bắt đầu.");
-        member.IsReady = ready; room.Version++; return View(room);
+        member.IsReady = ready; room.LastActivityAt = DateTimeOffset.UtcNow; room.Version++; return View(room);
     });
 
     public Task<RoomView> Start(Guid roomId, Guid userId, CommandInput input) => Write(() => Once(userId, input.RequestId, "start", new { roomId }, async () =>
@@ -621,6 +654,7 @@ public sealed class GameService(GameDbContext db, ILogger<GameService> logger)
         }
         else { member.LeftAt = DateTimeOffset.UtcNow; member.IsReady = false; member.IsConnected = false; }
         foreach (var m in room.Memberships) m.IsReady = false;
+        room.LastActivityAt = DateTimeOffset.UtcNow;
         room.Version++; return View(room);
     });
 
@@ -868,6 +902,9 @@ public sealed class GameService(GameDbContext db, ILogger<GameService> logger)
         return new
         {
             match.Id, match.RoomId, match.Status,
+            // Only countdown-bearing snapshots need a changing observation time.
+            // Ordinary/terminal snapshots remain stable for idempotent reads.
+            serverTime = match.Status == "paused" || match.DrawOfferId is not null ? (DateTimeOffset?)now : null,
             recoveryState = match.Status == "paused" && match.RecoveryReason == "disconnect" ? "waiting_reconnect" : match.Status,
             playerSide = userId is null ? null : match.Players.Single(p => p.UserId == userId).Side,
             match.Mode, match.AiDifficulty, match.Version, match.MoveNumber, match.SideToMove,
@@ -1168,6 +1205,7 @@ public sealed class GameService(GameDbContext db, ILogger<GameService> logger)
         var message = new ChatMessage { Id = Guid.NewGuid(), RoomId = roomId, SenderUserId = userId, RequestId = input.RequestId,
             Text = input.Content.Trim(), CreatedAt = DateTimeOffset.UtcNow, SenderUser = await db.Users.FindAsync(userId),
             Sequence = (await db.ChatMessages.Where(m => m.RoomId == roomId).MaxAsync(m => (long?)m.Sequence) ?? 0) + 1 };
+        room.LastActivityAt = message.CreatedAt;
         db.ChatMessages.Add(message); return ChatViewOf(message);
     });
     private static ChatView ChatViewOf(ChatMessage m) => new(m.Id, m.RoomId, m.SenderUserId, m.SenderUser?.DisplayName ?? "Kỳ thủ", m.Text, m.CreatedAt, m.Sequence);
