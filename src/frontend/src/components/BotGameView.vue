@@ -45,22 +45,24 @@ const resultLabel = computed(() => {
   const r = match.value?.result
   if (!r) return ''
   const outcome = ({ 'red-win': '🏆 Bạn thắng!', 'black-win': '🤖 Máy thắng!', draw: '🤝 Hòa!' } as Record<string, string>)[r.outcome] ?? 'Kết thúc'
-  const reason = ({
+  const reasonMap: Record<string, string> = {
     surrender: 'đầu hàng', checkmate: 'chiếu bí', stalemate: 'hết nước đi', 'draw-agreement': 'thỏa thuận hòa'
-  } as Record<string, string>)[r.reasonCode] ?? r.reasonCode
+  }
+  const reason = reasonMap[r.reasonCode] ?? r.reasonCode
   return `${outcome} · ${reason}`
 })
 
-const difficultyLabel = computed(() => ({
-  easy: '😊 Dễ', medium: '🧠 Trung bình', hard: '🔥 Khó'
-}[difficulty.value]))
+const difficultyLabel = computed(() => {
+  const labels: Record<Difficulty, string> = { easy: '😊 Dễ', medium: '🧠 Trung bình', hard: '🔥 Khó' }
+  return labels[difficulty.value]
+})
 
 // ── actions ────────────────────────────────────────────────────────────────
 async function startGame() {
   busy.value = true; error.value = ''
   try {
     const res = await pveApi.create(difficulty.value, crypto.randomUUID())
-    match.value = res.data
+    match.value = res
     phase.value = 'playing'
     // Listen for bot moves pushed via SignalR
     offSignalR = auth.signalR.on('PvEMatchChanged', (payload: unknown) => {
@@ -103,8 +105,8 @@ async function cell(col: number, row: number) {
       match.value.id, pieceId, col, row,
       match.value.version, crypto.randomUUID(), difficulty.value
     )
-    match.value = res.data
-    if (res.data.result) { phase.value = 'finished'; botThinking.value = false }
+    match.value = res
+    if (res.result) { phase.value = 'finished'; botThinking.value = false }
     // botThinking stays true until SignalR pushes the bot move (or timeout below)
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Lỗi gửi nước đi.'
@@ -117,7 +119,7 @@ async function surrender() {
   busy.value = true; error.value = ''
   try {
     const res = await pveApi.surrender(match.value.id)
-    match.value = res.data
+    match.value = res
     phase.value = 'finished'
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Lỗi đầu hàng.'
@@ -128,9 +130,9 @@ async function refresh() {
   if (!match.value) return
   try {
     const res = await pveApi.match(match.value.id)
-    match.value = res.data
+    match.value = res
     botThinking.value = false
-    if (res.data.result) phase.value = 'finished'
+    if (res.result) phase.value = 'finished'
   } catch { /* silent */ }
 }
 
@@ -138,19 +140,19 @@ function backToLobby() { router.push('/lobby') }
 function playAgain() { phase.value = 'select'; match.value = null; selected.value = null; error.value = '' }
 
 // Fallback polling: if SignalR bot move not received within 12s, poll manually
-let botTimeout: ReturnType<typeof setTimeout> | null = null
+let botTimeout: number | null = null
 function scheduleBotTimeout() {
-  if (botTimeout) clearTimeout(botTimeout)
+  if (botTimeout !== null) window.clearTimeout(botTimeout)
   if (botThinking.value) {
-    botTimeout = setTimeout(async () => { if (botThinking.value) await refresh() }, 12000)
+    botTimeout = window.setTimeout(async () => { if (botThinking.value) await refresh() }, 12000)
   }
 }
-watch(botThinking, val => { if (val) scheduleBotTimeout(); else { if (botTimeout) clearTimeout(botTimeout) } })
+watch(botThinking, val => { if (val) scheduleBotTimeout(); else { if (botTimeout !== null) window.clearTimeout(botTimeout) } })
 
 onMounted(async () => {
   if (!auth.signalR.isConnected.value) await auth.signalR.connect()
 })
-onUnmounted(() => { offSignalR?.(); if (botTimeout) clearTimeout(botTimeout) })
+onUnmounted(() => { offSignalR?.(); if (botTimeout !== null) window.clearTimeout(botTimeout) })
 </script>
 
 <template>
