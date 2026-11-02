@@ -577,6 +577,42 @@ public sealed class CoreApiAcceptanceTests : IDisposable
         }
     }
 
+    [Fact] public async Task GCT90_player_and_machine_share_match_flow_and_history()
+    {
+        var red = await User("ai_flow");
+        var initial = await Data(await red.Client.PostAsJsonAsync("/api/v1/matches/ai",
+            new { requestId = Guid.NewGuid(), difficulty = "medium" }));
+        var matchId = initial.GetProperty("id").GetGuid();
+        Assert.Equal("pve", initial.GetProperty("mode").GetString());
+        Assert.Equal("red", initial.GetProperty("playerSide").GetString());
+        Assert.Equal("red", initial.GetProperty("sideToMove").GetString());
+        Assert.Equal("medium", initial.GetProperty("aiDifficulty").GetString());
+
+        var afterTurn = await Data(await red.Client.PostAsJsonAsync(
+            $"/api/v1/matches/{matchId}/moves", Move(initial.GetProperty("version").GetInt64())));
+        Assert.Equal(2, afterTurn.GetProperty("moveNumber").GetInt32());
+        Assert.Equal("red", afterTurn.GetProperty("sideToMove").GetString());
+        Assert.Equal("black", afterTurn.GetProperty("lastMove").GetProperty("side").GetString());
+
+        var finished = await Data(await red.Client.PostAsJsonAsync(
+            $"/api/v1/matches/{matchId}/surrender", new { confirmed = true }));
+        Assert.Equal("finished", finished.GetProperty("status").GetString());
+
+        var history = await Data(await red.Client.GetAsync($"/api/v1/matches/{matchId}/history"));
+        Assert.Equal("pve", history.GetProperty("mode").GetString());
+        Assert.Equal("finished", history.GetProperty("status").GetString());
+        Assert.Equal("surrender", history.GetProperty("reasonCode").GetString());
+        Assert.Equal("Máy", history.GetProperty("opponent").GetProperty("displayName").GetString());
+        var moves = history.GetProperty("moves").EnumerateArray().ToArray();
+        Assert.Equal(new[] { "red", "black" }, moves.Select(move => move.GetProperty("side").GetString()));
+        Assert.Equal(history.GetProperty("currentBoardJson").GetString(),
+            moves[^1].GetProperty("boardSnapshotJson").GetString());
+        Assert.Equal("MATCH_NOT_PLAYING", await Error(
+            await red.Client.PostAsJsonAsync($"/api/v1/matches/{matchId}/moves",
+                Move(finished.GetProperty("version").GetInt64(), request: Guid.NewGuid())),
+            HttpStatusCode.Conflict));
+    }
+
     public void Dispose() {foreach(var c in clients)c.Dispose();factory.Dispose();root.Dispose();Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();File.Delete(path);}
 
     private sealed class CaptureLogs : ILoggerProvider
