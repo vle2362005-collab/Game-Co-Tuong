@@ -72,6 +72,7 @@ app.MapAuthEndpoints();
 app.MapUserEndpoints();
 app.MapRoomEndpoints();
 app.MapMatchEndpoints();
+app.MapPveEndpoints();
 app.MapHub<GameHub>("/hubs/game");
 
 app.Run();

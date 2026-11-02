@@ -31,6 +31,13 @@ onUnmounted(() => { disposers.forEach(fn => fn()); void auth.signalR.invoke('Lea
 <template>
   <section class="lobby">
     <h1>Sảnh cờ</h1><p>Tạo phòng hoặc nhập mã để chơi với bạn.</p>
+    <div class="lobby-bot-banner">
+      <div>
+        <strong>🤖 Chơi với Máy</strong>
+        <p>Không cần đối thủ trực tuyến — chọn mức khó và đấu ngay!</p>
+      </div>
+      <button class="btn-bot" @click="router.push('/bot')" id="lobby-play-bot-btn">🤖 Bắt đầu</button>
+    </div>
     <p v-if="error" role="alert" class="error">{{ error }}</p>
     <form class="actions" @submit.prevent="createRoom">
       <label>Tên phòng <input v-model="name" maxlength="80" required></label><button :disabled="busy">Tạo phòng</button>
@@ -47,5 +54,11 @@ onUnmounted(() => { disposers.forEach(fn => fn()); void auth.signalR.invoke('Lea
   </section>
 </template>
 <style scoped>
-.lobby{max-width:760px;width:100%;margin:auto}.actions{display:flex;gap:12px;align-items:end;margin:18px 0}label{display:grid;gap:6px;flex:1}input{padding:12px;border:1px solid #bccbc3;border-radius:8px;font:inherit}.room-list{padding:0;list-style:none}.room-list li{display:flex;gap:12px;align-items:center;padding:18px;border:1px solid #d1ddd5;border-radius:12px;margin:12px 0}.room-list li div{flex:1}.error{color:#a12525}button{padding:11px 18px;cursor:pointer}button:disabled{opacity:.5;cursor:default}
+.lobby{max-width:760px;width:100%;margin:auto}
+.lobby-bot-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;background:#f0faf5;border:1px solid #b5d9c5;border-radius:14px;padding:16px 20px;margin:18px 0}
+.lobby-bot-banner p{margin:4px 0 0;font-size:.84rem;color:#3d6b58}
+.lobby-bot-banner strong{color:#172b26}
+.btn-bot{padding:11px 20px;background:#2d5246;color:#fff;border:none;border-radius:10px;font-weight:700;font-size:.9rem;cursor:pointer;white-space:nowrap}
+.btn-bot:hover{background:#1d3d34}
+.actions{display:flex;gap:12px;align-items:end;margin:18px 0}label{display:grid;gap:6px;flex:1}input{padding:12px;border:1px solid #bccbc3;border-radius:8px;font:inherit}.room-list{padding:0;list-style:none}.room-list li{display:flex;gap:12px;align-items:center;padding:18px;border:1px solid #d1ddd5;border-radius:12px;margin:12px 0}.room-list li div{flex:1}.error{color:#a12525}button{padding:11px 18px;cursor:pointer}button:disabled{opacity:.5;cursor:default}
 </style>

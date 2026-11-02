@@ -45,6 +45,7 @@ public static class DependencyInjection
         services.AddScoped<IRegistrationService, RegistrationService>();
         services.AddScoped<ILoginService, LoginService>();
         services.AddScoped<Game.GameService>();
+        services.AddScoped<Game.BotGameService>();
 
         return services;
     }
