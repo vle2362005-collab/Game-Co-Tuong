@@ -1,11 +1,14 @@
 using System.Text.Json;
 using GameCoTuong.Application.Game;
 using GameCoTuong.Domain.Entities;
+using GameCoTuong.Domain.Enums;
+using GameCoTuong.Domain.ValueObjects;
 using GameCoTuong.Infrastructure.Game;
 using GameCoTuong.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using GameCoTuong.Engine.Serialization;
 using GameCoTuong.Engine.Model;
+using GameCoTuong.Engine.Rules;
 using GameCoTuong.Api.Hubs;
 
 namespace GameCoTuong.Foundation.Tests;
@@ -32,6 +35,147 @@ public sealed class GameFlowTests : IDisposable
         room = await Run(s => s.Start(room.Id,red,new(Guid.NewGuid())));
         return (room,room.MatchId!.Value);
     }
+    private static Piece P(string id, PieceType type, Side side, int col, int row) => new(id, type, side, new(col, row));
+    private static string PositionKey(Board board, Side sideToMove) =>
+        $"{sideToMove}|" + string.Join("|", board.OrderBy(p => p.Type).ThenBy(p => p.Side)
+            .ThenBy(p => p.Position.Col).ThenBy(p => p.Position.Row)
+            .Select(p => $"{p.Type}:{p.Side}:{p.Position.Col}:{p.Position.Row}"));
+
+    private async Task<IReadOnlyList<Board>> PlaySequence(
+        Guid matchId,
+        Board initial,
+        params (string PieceId, Side Side, int Col, int Row)[] moves)
+    {
+        var initialJson = BoardSerializer.Serialize(initial);
+        await using (var db = Db())
+        {
+            var match = await db.Matches.SingleAsync(m => m.Id == matchId);
+            match.InitialBoardJson = initialJson;
+            match.CurrentBoardJson = initialJson;
+            match.SideToMove = "red";
+            match.MoveNumber = 0;
+            match.Version = 1;
+            await db.SaveChangesAsync();
+        }
+
+        var boards = new List<Board> { initial };
+        foreach (var next in moves)
+        {
+            await using var db = Db();
+            var match = await db.Matches.AsNoTracking().SingleAsync(m => m.Id == matchId);
+            Assert.Equal(next.Side.ToString().ToLowerInvariant(), match.SideToMove);
+            var board = BoardSerializer.Deserialize(match.CurrentBoardJson);
+            var legalMove = new LegalMove(next.PieceId, new(next.Col, next.Row));
+            Assert.True(XiangqiRules.IsLegal(board, next.Side, legalMove),
+                $"Expected legal move: {next.Side} {next.PieceId} to {next.Col},{next.Row}");
+
+            var playerId = next.Side == Side.Red ? red : black;
+            await Run(s => s.Move(matchId, playerId,
+                new MoveInput(Guid.NewGuid(), match.Version, next.PieceId, next.Col, next.Row)));
+
+            await using var afterDb = Db();
+            var after = await afterDb.Matches.AsNoTracking().SingleAsync(m => m.Id == matchId);
+            boards.Add(BoardSerializer.Deserialize(after.CurrentBoardJson));
+        }
+
+        return boards;
+    }
+
+    private async Task AssertRepeatedMatchContinues(Guid matchId, Board initial, IReadOnlyList<Board> positions)
+    {
+        var initialKey = PositionKey(initial, Side.Red);
+        Assert.Equal(3, positions.Select((board, index) =>
+                PositionKey(board, index % 2 == 0 ? Side.Red : Side.Black))
+            .Count(key => key == initialKey));
+
+        await using var db = Db();
+        var match = await db.Matches.AsNoTracking().SingleAsync(m => m.Id == matchId);
+        var moves = await db.Moves.AsNoTracking().Where(m => m.MatchId == matchId).OrderBy(m => m.Ply).ToListAsync();
+        Assert.Equal("playing", match.Status);
+        Assert.Equal("red", match.SideToMove);
+        Assert.Null(match.Winner);
+        Assert.Null(match.ResultReason);
+        Assert.Equal(moves.Count, match.MoveNumber);
+
+        var replay = BoardSerializer.Deserialize(match.InitialBoardJson);
+        foreach (var move in moves)
+            replay = replay.ApplyMove(move.PieceId, new(move.ToCol, move.ToRow), out _);
+        Assert.Equal(PositionKey(replay, Side.Red), PositionKey(BoardSerializer.Deserialize(match.CurrentBoardJson), Side.Red));
+    }
+
+    [Fact]
+    public async Task GCT112_three_occurrences_of_same_position_do_not_auto_draw()
+    {
+        var (_, matchId) = await Start();
+        var board = new Board(new[]
+        {
+            P("red-general-1", PieceType.General, Side.Red, 5, 9),
+            P("black-general-1", PieceType.General, Side.Black, 3, 0),
+            P("red-chariot-1", PieceType.Chariot, Side.Red, 0, 8),
+            P("black-chariot-1", PieceType.Chariot, Side.Black, 8, 1)
+        });
+        var positions = await PlaySequence(matchId, board,
+            ("red-chariot-1", Side.Red, 0, 7), ("black-chariot-1", Side.Black, 8, 2),
+            ("red-chariot-1", Side.Red, 0, 8), ("black-chariot-1", Side.Black, 8, 1),
+            ("red-chariot-1", Side.Red, 0, 7), ("black-chariot-1", Side.Black, 8, 2),
+            ("red-chariot-1", Side.Red, 0, 8), ("black-chariot-1", Side.Black, 8, 1));
+
+        await AssertRepeatedMatchContinues(matchId, board, positions);
+    }
+
+    [Fact]
+    public async Task GCT112_repeated_check_sequence_is_legal_but_not_adjudicated()
+    {
+        var (_, matchId) = await Start();
+        var board = new Board(new[]
+        {
+            P("red-general-1", PieceType.General, Side.Red, 5, 9),
+            P("black-general-1", PieceType.General, Side.Black, 4, 0),
+            P("red-chariot-1", PieceType.Chariot, Side.Red, 3, 1)
+        });
+        var moves = new (string PieceId, Side Side, int Col, int Row)[]
+        {
+            ("red-chariot-1", Side.Red, 4, 1), ("black-general-1", Side.Black, 3, 0),
+            ("red-chariot-1", Side.Red, 3, 1), ("black-general-1", Side.Black, 4, 0),
+            ("red-chariot-1", Side.Red, 4, 1), ("black-general-1", Side.Black, 3, 0),
+            ("red-chariot-1", Side.Red, 3, 1), ("black-general-1", Side.Black, 4, 0)
+        };
+        var positions = await PlaySequence(matchId, board, moves);
+
+        for (var index = 0; index < moves.Length; index += 2)
+            Assert.True(XiangqiRules.IsInCheck(positions[index + 1], Side.Black));
+        await AssertRepeatedMatchContinues(matchId, board, positions);
+    }
+
+    [Fact]
+    public async Task GCT112_repeated_attack_on_same_piece_is_not_classified_as_chase()
+    {
+        var (_, matchId) = await Start();
+        var board = new Board(new[]
+        {
+            P("red-general-1", PieceType.General, Side.Red, 5, 9),
+            P("black-general-1", PieceType.General, Side.Black, 3, 0),
+            P("red-chariot-1", PieceType.Chariot, Side.Red, 0, 6),
+            P("black-horse-1", PieceType.Horse, Side.Black, 1, 2)
+        });
+        var moves = new (string PieceId, Side Side, int Col, int Row)[]
+        {
+            ("red-chariot-1", Side.Red, 1, 6), ("black-horse-1", Side.Black, 0, 4),
+            ("red-chariot-1", Side.Red, 0, 6), ("black-horse-1", Side.Black, 1, 2),
+            ("red-chariot-1", Side.Red, 1, 6), ("black-horse-1", Side.Black, 0, 4),
+            ("red-chariot-1", Side.Red, 0, 6), ("black-horse-1", Side.Black, 1, 2)
+        };
+        var positions = await PlaySequence(matchId, board, moves);
+
+        for (var index = 0; index < moves.Length; index += 2)
+        {
+            var attacked = positions[index + 1];
+            var horse = attacked.GetPieceById("black-horse-1")!;
+            Assert.True(XiangqiRules.IsLegal(attacked, Side.Red, new("red-chariot-1", horse.Position)));
+        }
+        await AssertRepeatedMatchContinues(matchId, board, positions);
+    }
+
     [Fact] public async Task Create_retry_join_race_and_access_checks()
     {
         var input = new CreateRoomInput(Guid.NewGuid(),"Race room");

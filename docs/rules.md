@@ -22,4 +22,4 @@ Theo GCT-42: cột 0–8; hàng 0–9; Đen trên, Đỏ dưới. Cung: cột 3�
 
 ## Chưa hỗ trợ
 
-GCT-62 chỉ đặc tả lặp thế/trường chiếu/trường tróc; chưa tự phân xử đầy đủ, chưa có hòa ba lần, hòa do số nước không ăn hoặc tự nhận thiếu lực lượng. UI phải công bố giới hạn. Hòa thỏa thuận, đồng hồ và phục hồi dùng chính sách đồ án tại `requirements.md`, không gán là luật giải đấu WXF.
+GCT-62/GCT-112 đặc tả và đối chiếu lặp thế/trường chiếu/trường tróc; demo chưa tự phân xử đầy đủ, chưa có hòa ba lần, hòa do số nước không ăn hoặc tự nhận thiếu lực lượng. Màn hình ván cờ công bố giới hạn; không áp luật hòa ba lần của cờ vua. Hòa thỏa thuận, đồng hồ và phục hồi dùng chính sách đồ án tại `requirements.md`, không gán là luật giải đấu WXF.
