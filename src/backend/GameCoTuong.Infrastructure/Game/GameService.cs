@@ -1,4 +1,5 @@
 using System.Data;
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text.Json;
 using GameCoTuong.Application.Game;
@@ -24,6 +25,36 @@ public sealed class GameService(GameDbContext db, ILogger<GameService> logger)
     public static readonly SemaphoreSlim WriteGate = new(1, 1);
     public static readonly TimeSpan DrawOfferDuration = TimeSpan.FromSeconds(30);
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    private static readonly ConcurrentDictionary<Guid, AiSearchCancellation> AiSearches = new();
+
+    private sealed class AiSearchCancellation : IDisposable
+    {
+        private readonly object sync = new();
+        private readonly CancellationTokenSource source = new();
+        private bool disposed;
+
+        public CancellationToken Token => source.Token;
+
+        public void Cancel()
+        {
+            lock (sync)
+                if (!disposed)
+                    source.Cancel();
+        }
+
+        public void Dispose()
+        {
+            lock (sync)
+            {
+                if (disposed) return;
+                disposed = true;
+                source.Dispose();
+            }
+        }
+    }
+
+    private sealed record AiTurn(Guid MatchId, long Version, string BoardJson, string Difficulty, Guid UserId);
+    private sealed record MoveOutcome(object Snapshot, AiTurn? AiTurn);
 
     public async Task<T> Write<T>(Func<Task<T>> action)
     {
@@ -91,33 +122,50 @@ public sealed class GameService(GameDbContext db, ILogger<GameService> logger)
         var room = await LoadRoom(roomId); Member(room, userId); return View(room);
     }
 
-    public Task<RoomView> Presence(Guid roomId, Guid userId, bool connected) => Write(async () =>
+    public async Task<RoomView> Presence(Guid roomId, Guid userId, bool connected)
     {
-        var room = await LoadRoom(roomId); var member = Member(room, userId);
-        if (connected && room.CurrentMatchId is Guid matchId)
+        var outcome = await Write(async () =>
         {
-            var match = await LoadRecoveryMatch(matchId);
-            if (match.Status == "paused" && match.RecoveryReason is "serverRestart" or "disconnect")
-                await RestoreRecovery(match, userId);
-            else
-                member.IsConnected = true;
-        }
-        else if (connected) member.IsConnected = true;
-        if (!connected)
-        {
-            foreach (var m in room.Memberships) m.IsReady = false;
-            if (room.CurrentMatchId is Guid disconnectedMatchId)
+            var room = await LoadRoom(roomId);
+            var member = Member(room, userId);
+            AiTurn? aiTurn = null;
+            if (connected && room.CurrentMatchId is Guid matchId)
             {
-                var match = await LoadRecoveryMatch(disconnectedMatchId);
-                if (match.Status == "playing")
-                    PauseForDisconnect(match, member, DateTimeOffset.UtcNow);
-                else if (match.Status == "paused" && match.RecoveryReason is "serverRestart" or "disconnect")
-                    SetRecoveryDeadline(match, member, DateTimeOffset.UtcNow);
+                var match = await LoadRecoveryMatch(matchId);
+                if (match.Status == "paused" && match.RecoveryReason is "serverRestart" or "disconnect")
+                {
+                    await RestoreRecovery(match, userId);
+                    aiTurn = CreateAiTurn(match, userId);
+                }
+                else
+                {
+                    member.IsConnected = true;
+                }
             }
-            member.IsConnected = false;
-        }
-        room.Version++; return View(room);
-    });
+            else if (connected) member.IsConnected = true;
+            if (!connected)
+            {
+                foreach (var m in room.Memberships) m.IsReady = false;
+                if (room.CurrentMatchId is Guid disconnectedMatchId)
+                {
+                    var match = await LoadRecoveryMatch(disconnectedMatchId);
+                    if (match.Status == "playing")
+                        PauseForDisconnect(match, member, DateTimeOffset.UtcNow);
+                    else if (match.Status == "paused" && match.RecoveryReason is "serverRestart" or "disconnect")
+                        SetRecoveryDeadline(match, member, DateTimeOffset.UtcNow);
+                }
+                member.IsConnected = false;
+            }
+            room.Version++;
+            return (Room: View(room), AiTurn: aiTurn);
+        });
+
+        if (outcome.AiTurn is null) return outcome.Room;
+        db.ChangeTracker.Clear();
+        await PlayAiTurn(outcome.AiTurn);
+        db.ChangeTracker.Clear();
+        return await Write(async () => View(await LoadRoom(roomId)));
+    }
 
     public Task<int> RecoverAfterRestart() => Write(async () =>
     {
@@ -130,6 +178,7 @@ public sealed class GameService(GameDbContext db, ILogger<GameService> logger)
 
         foreach (var match in matches)
         {
+            CancelAiSearch(match.Id);
             var wasWaitingForDisconnect = match.Status == "paused" && match.RecoveryReason == "disconnect";
             match.Status = "paused";
             if (!wasWaitingForDisconnect) match.RecoveryReason = "serverRestart";
@@ -156,19 +205,26 @@ public sealed class GameService(GameDbContext db, ILogger<GameService> logger)
         return matches.Count;
     });
 
-    public Task<object> Reconnect(Guid id, Guid userId) => Write(async () =>
+    public async Task<object> Reconnect(Guid id, Guid userId)
     {
-        var match = await LoadRecoveryMatch(id);
-        if (!match.Players.Any(p => p.UserId == userId))
-            throw new GameFault("NOT_MATCH_PLAYER", "Bạn không tham gia trận này.", 403);
-        if (match.Status == "playing" || match.Status == "cancelled" || match.Status == "finished")
-            return await MatchView(match, userId);
-        if (match.Status != "paused" || match.RecoveryReason is not ("serverRestart" or "disconnect"))
-            throw new GameFault("MATCH_NOT_RECOVERABLE", "Trận không chờ khôi phục kết nối.");
+        var outcome = await Write(async () =>
+        {
+            var match = await LoadRecoveryMatch(id);
+            if (!match.Players.Any(p => p.UserId == userId))
+                throw new GameFault("NOT_MATCH_PLAYER", "Bạn không tham gia trận này.", 403);
+            if (match.Status == "playing" || match.Status == "cancelled" || match.Status == "finished")
+                return (Snapshot: await MatchView(match, userId), AiTurn: (AiTurn?)null);
+            if (match.Status != "paused" || match.RecoveryReason is not ("serverRestart" or "disconnect"))
+                throw new GameFault("MATCH_NOT_RECOVERABLE", "Trận không chờ khôi phục kết nối.");
 
-        await RestoreRecovery(match, userId);
-        return await MatchView(match, userId);
-    });
+            await RestoreRecovery(match, userId);
+            return (Snapshot: await MatchView(match, userId), AiTurn: CreateAiTurn(match, userId));
+        });
+
+        if (outcome.AiTurn is null) return outcome.Snapshot;
+        db.ChangeTracker.Clear();
+        return await PlayAiTurn(outcome.AiTurn);
+    }
 
     public Task<int> ExpireRecoveries() => Write(async () =>
     {
@@ -281,6 +337,7 @@ public sealed class GameService(GameDbContext db, ILogger<GameService> logger)
 
     private static void PauseForDisconnect(Match match, RoomMembership member, DateTimeOffset now)
     {
+        CancelAiSearch(match.Id);
         match.Status = "paused";
         match.RecoveryReason = "disconnect";
         match.TurnStartedAt = null;
@@ -833,51 +890,121 @@ public sealed class GameService(GameDbContext db, ILogger<GameService> logger)
 
     public async Task<Guid> MatchRoomId(Guid id, Guid userId) => (await LoadMatch(id, userId)).RoomId;
 
-    public Task<object> Move(Guid id, Guid userId, MoveInput input) => Write(async () =>
+    public async Task<object> Move(Guid id, Guid userId, MoveInput input)
     {
-        var match = await LoadMatch(id, userId);
-        if (input.RequestId == Guid.Empty) throw new GameFault("VALIDATION_ERROR", "Thiếu mã nước.", 400);
-        if (string.IsNullOrWhiteSpace(input.PieceId)) throw new GameFault("VALIDATION_ERROR", "Thiếu mã quân cờ.", 400);
-        var previous = await db.Moves.SingleOrDefaultAsync(m => m.MatchId == id && m.RequestId == input.RequestId);
-        if (previous is not null)
+        var outcome = await Write(async () =>
         {
-            var playerSide = match.Players.Single(p => p.UserId == userId).Side;
-            if (previous.Side != playerSide || previous.PieceId != input.PieceId || previous.ToCol != input.ToCol || previous.ToRow != input.ToRow)
-                throw new GameFault("REQUEST_CONFLICT", "Mã nước đã được sử dụng.");
-            return await MatchView(match);
-        }
-        if (match.Status != "playing") throw new GameFault("MATCH_NOT_PLAYING", "Trận không cho phép đi quân.");
-        if (match.Version != input.ExpectedVersion) throw new GameFault("VERSION_CONFLICT", "Bàn cờ đã thay đổi, hãy tải lại.");
-        if (match.Players.Single(p => p.UserId == userId).Side != match.SideToMove)
-            throw new GameFault("NOT_YOUR_TURN", "Chưa đến lượt của bạn.", 403);
-        if (!Position.IsValid(input.ToCol, input.ToRow)) throw new GameFault("INVALID_MOVE", "Tọa độ ngoài bàn cờ.", 400);
-        var move = new LegalMove(input.PieceId, new Position(input.ToCol, input.ToRow));
-        var board = BoardSerializer.Deserialize(match.CurrentBoardJson);
-        if (!XiangqiRules.IsLegal(board, ParseSide(match.SideToMove), move))
-            throw new GameFault("INVALID_MOVE", "Nước đi không hợp lệ.", 400);
-        await ApplyMove(match, input.RequestId, move);
+            var match = await LoadMatch(id, userId);
+            if (input.RequestId == Guid.Empty) throw new GameFault("VALIDATION_ERROR", "Thiếu mã nước.", 400);
+            if (string.IsNullOrWhiteSpace(input.PieceId)) throw new GameFault("VALIDATION_ERROR", "Thiếu mã quân cờ.", 400);
+            var previous = await db.Moves.SingleOrDefaultAsync(m => m.MatchId == id && m.RequestId == input.RequestId);
+            if (previous is not null)
+            {
+                var playerSide = match.Players.Single(p => p.UserId == userId).Side;
+                if (previous.Side != playerSide || previous.PieceId != input.PieceId || previous.ToCol != input.ToCol || previous.ToRow != input.ToRow)
+                    throw new GameFault("REQUEST_CONFLICT", "Mã nước đã được sử dụng.");
+                return new MoveOutcome(await MatchView(match), null);
+            }
+            if (match.Status != "playing") throw new GameFault("MATCH_NOT_PLAYING", "Trận không cho phép đi quân.");
+            if (match.Version != input.ExpectedVersion) throw new GameFault("VERSION_CONFLICT", "Bàn cờ đã thay đổi, hãy tải lại.");
+            if (match.Players.Single(p => p.UserId == userId).Side != match.SideToMove)
+                throw new GameFault("NOT_YOUR_TURN", "Chưa đến lượt của bạn.", 403);
+            if (!Position.IsValid(input.ToCol, input.ToRow)) throw new GameFault("INVALID_MOVE", "Tọa độ ngoài bàn cờ.", 400);
+            var move = new LegalMove(input.PieceId, new Position(input.ToCol, input.ToRow));
+            var board = BoardSerializer.Deserialize(match.CurrentBoardJson);
+            if (!XiangqiRules.IsLegal(board, ParseSide(match.SideToMove), move))
+                throw new GameFault("INVALID_MOVE", "Nước đi không hợp lệ.", 400);
+            await ApplyMove(match, input.RequestId, move);
 
-        if (match.Status == "playing" && (match.Mode is "pve" or "ai") && match.SideToMove == "black")
+            return new MoveOutcome(await MatchView(match), CreateAiTurn(match, userId));
+        });
+
+        if (outcome.AiTurn is null) return outcome.Snapshot;
+        db.ChangeTracker.Clear();
+        return await PlayAiTurn(outcome.AiTurn);
+    }
+
+    private async Task<object> PlayAiTurn(AiTurn turn)
+    {
+        var cancellation = new AiSearchCancellation();
+        if (!AiSearches.TryAdd(turn.MatchId, cancellation))
         {
-            var (depth, budget) = AiSearchParameters(match.AiDifficulty);
-            var aiBoard = BoardSerializer.Deserialize(match.CurrentBoardJson);
-            var aiMove = Minimax.FindBest(aiBoard, Side.Black, depth, budget);
-            if (aiMove is null)
-            {
-                var result = XiangqiRules.Result(aiBoard, Side.Black);
-                if (result.Finished)
-                    await Finish(match, result.Winner == Side.Red ? "red" : "black", result.Reason!);
-            }
-            else
-            {
-                await ApplyMove(match, Guid.NewGuid(), aiMove);
-            }
+            cancellation.Dispose();
+            return await ReadCurrentMatch(turn.MatchId, turn.UserId);
         }
+
+        try
+        {
+            var current = await db.Matches.AsNoTracking()
+                .Where(match => match.Id == turn.MatchId)
+                .Select(match => new { match.Status, match.Version, match.SideToMove, match.CurrentBoardJson })
+                .SingleOrDefaultAsync();
+            if (current is null || current.Status != "playing" || current.Version != turn.Version ||
+                current.SideToMove != "black" || current.CurrentBoardJson != turn.BoardJson)
+                return await ReadCurrentMatch(turn.MatchId, turn.UserId);
+
+            var (depth, budget) = AiSearchParameters(turn.Difficulty);
+            var aiBoard = BoardSerializer.Deserialize(turn.BoardJson);
+            LegalMove? aiMove;
+            try
+            {
+                aiMove = Minimax.FindBest(aiBoard, Side.Black, depth, budget, cancellation.Token);
+            }
+            catch (OperationCanceledException) when (cancellation.Token.IsCancellationRequested)
+            {
+                return await ReadCurrentMatch(turn.MatchId, turn.UserId);
+            }
+
+            if (cancellation.Token.IsCancellationRequested)
+                return await ReadCurrentMatch(turn.MatchId, turn.UserId);
+
+            return await Write(async () =>
+            {
+                var match = await LoadMatch(turn.MatchId, turn.UserId);
+                if (match.Status != "playing" || match.Version != turn.Version ||
+                    match.SideToMove != "black" || match.CurrentBoardJson != turn.BoardJson)
+                    return await MatchView(match);
+
+                if (aiMove is null)
+                {
+                    var result = XiangqiRules.Result(aiBoard, Side.Black);
+                    if (result.Finished)
+                        await Finish(match, result.Winner == Side.Red ? "red" : "black", result.Reason!);
+                }
+                else
+                {
+                    await ApplyMove(match, Guid.NewGuid(), aiMove);
+                }
+                return await MatchView(match);
+            });
+        }
+        finally
+        {
+            AiSearches.TryRemove(turn.MatchId, out _);
+            cancellation.Dispose();
+        }
+    }
+
+    private Task<object> ReadCurrentMatch(Guid matchId, Guid userId) => Write(async () =>
+    {
+        var match = await LoadMatch(matchId, userId);
         return await MatchView(match);
     });
 
+    private static void CancelAiSearch(Guid matchId)
+    {
+        if (AiSearches.TryGetValue(matchId, out var cancellation))
+            cancellation.Cancel();
+    }
+
+    private static AiTurn? CreateAiTurn(Match match, Guid userId) =>
+        match.Status == "playing" && (match.Mode is "pve" or "ai") && match.SideToMove == "black"
+            ? new AiTurn(match.Id, match.Version, match.CurrentBoardJson, match.AiDifficulty, userId)
+            : null;
+
     private async Task ApplyMove(Match match, Guid requestId, LegalMove move)
     {
+        CancelAiSearch(match.Id);
         var board = BoardSerializer.Deserialize(match.CurrentBoardJson);
         var side = ParseSide(match.SideToMove);
         if (!XiangqiRules.IsLegal(board, side, move))
@@ -897,15 +1024,16 @@ public sealed class GameService(GameDbContext db, ILogger<GameService> logger)
 
     private static (int Depth, TimeSpan Budget) AiSearchParameters(string difficulty) => difficulty switch
     {
-        "easy" => (1, TimeSpan.FromMilliseconds(150)),
-        "medium" => (2, TimeSpan.FromMilliseconds(450)),
-        "hard" => (3, TimeSpan.FromMilliseconds(900)),
+        "easy" => (1, TimeSpan.FromMilliseconds(300)),
+        "medium" => (2, TimeSpan.FromMilliseconds(900)),
+        "hard" => (3, TimeSpan.FromMilliseconds(1500)),
         _ => throw new GameFault("INVALID_AI_DIFFICULTY", "Mức khó của trận không hợp lệ.", 500)
     };
 
     private async Task Finish(Match match, string? winner, string reason)
     {
         if (IsTerminalStatus(match.Status)) return;
+        CancelAiSearch(match.Id);
         match.Status = "finished"; match.Winner = winner; match.ResultReason = reason;
         match.EndedAt = DateTimeOffset.UtcNow; match.Version++; ClearDrawOffer(match);
         var room = await LoadRoom(match.RoomId); room.Status = "finished"; room.Version++;

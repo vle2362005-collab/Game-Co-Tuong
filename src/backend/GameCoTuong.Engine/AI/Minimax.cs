@@ -5,7 +5,7 @@ using GameCoTuong.Engine.Rules;
 
 namespace GameCoTuong.Engine.AI;
 
-public sealed record SearchResult(LegalMove? BestMove, int Score, long Nodes, TimeSpan Elapsed);
+public sealed record SearchResult(LegalMove? BestMove, int Score, long Nodes, TimeSpan Elapsed, int CompletedDepth);
 
 public static class Minimax
 {
@@ -13,13 +13,15 @@ public static class Minimax
 
     private sealed class SearchTimeoutException : Exception { }
 
-    private sealed class SearchContext(bool alphaBeta, bool orderMoves, TimeSpan? timeLimit)
+    private sealed class SearchContext(bool alphaBeta, bool orderMoves, TimeSpan? timeLimit, CancellationToken cancellationToken)
     {
         public bool AlphaBeta { get; } = alphaBeta;
         public bool OrderMoves { get; } = orderMoves;
         public TimeSpan? TimeLimit { get; } = timeLimit;
+        public CancellationToken CancellationToken { get; } = cancellationToken;
         public Stopwatch Timer { get; } = Stopwatch.StartNew();
         public long Nodes { get; set; }
+        public int CompletedDepth { get; set; }
     }
 
     public static int Evaluate(Board board, Side perspective)
@@ -35,20 +37,24 @@ public static class Minimax
         return score;
     }
 
-    public static LegalMove? FindBest(Board board, Side side, int depth = 2, TimeSpan? timeLimit = null) =>
+    public static LegalMove? FindBest(Board board, Side side, int depth = 2, TimeSpan? timeLimit = null,
+        CancellationToken cancellationToken = default) =>
         FindBestWithStats(board, side, depth, alphaBeta: true, orderMoves: true,
-            timeLimit ?? TimeSpan.FromSeconds(2)).BestMove;
+            timeLimit: timeLimit ?? TimeSpan.FromSeconds(2), cancellationToken: cancellationToken).BestMove;
 
     public static SearchResult FindBestWithStats(Board board, Side side, int depth = 2,
-        bool alphaBeta = true, bool orderMoves = true, TimeSpan? timeLimit = null)
+        bool alphaBeta = true, bool orderMoves = true, TimeSpan? timeLimit = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(board);
         depth = Math.Clamp(depth, 1, 3);
         if (timeLimit is { } budget && budget <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(timeLimit));
 
-        var context = new SearchContext(alphaBeta, orderMoves, timeLimit);
+        cancellationToken.ThrowIfCancellationRequested();
+        var context = new SearchContext(alphaBeta, orderMoves, timeLimit, cancellationToken);
         var rootMoves = XiangqiRules.Generate(board, side);
+        cancellationToken.ThrowIfCancellationRequested();
         if (rootMoves.Count == 0)
             return Result(null, -Mate, context);
 
@@ -62,6 +68,7 @@ public static class Minimax
                 var (move, score) = SearchRoot(board, side, currentDepth, rootMoves, context);
                 bestMove = move;
                 bestScore = score;
+                context.CompletedDepth = currentDepth;
             }
             catch (SearchTimeoutException)
             {
@@ -163,10 +170,11 @@ public static class Minimax
 
     private static void CheckTime(SearchContext context)
     {
+        context.CancellationToken.ThrowIfCancellationRequested();
         if (context.TimeLimit is { } budget && context.Timer.Elapsed >= budget)
             throw new SearchTimeoutException();
     }
 
     private static SearchResult Result(LegalMove? move, int score, SearchContext context) =>
-        new(move, score, context.Nodes, context.Timer.Elapsed);
+        new(move, score, context.Nodes, context.Timer.Elapsed, context.CompletedDepth);
 }

@@ -534,6 +534,48 @@ public sealed class CoreApiAcceptanceTests : IDisposable
         Assert.Equal("surrender", item.GetProperty("reasonCode").GetString());
     }
 
+    [Fact] public async Task GCT72_surrender_while_ai_is_thinking_never_applies_a_stale_move()
+    {
+        var red = await User("ai_cancel");
+        var initial = await Data(await red.Client.PostAsJsonAsync("/api/v1/matches/ai",
+            new { requestId = Guid.NewGuid(), difficulty = "hard" }));
+        var matchId = initial.GetProperty("id").GetGuid();
+        var moveTask = red.Client.PostAsJsonAsync(
+            $"/api/v1/matches/{matchId}/moves", Move(initial.GetProperty("version").GetInt64()));
+
+        var moveDeadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        while (DateTimeOffset.UtcNow < moveDeadline)
+        {
+            using var progress = Db();
+            if (await progress.Moves.AnyAsync(m => m.MatchId == matchId)) break;
+            await Task.Delay(5);
+        }
+        using (var verifyPlayerMove = Db())
+            Assert.True(await verifyPlayerMove.Moves.AnyAsync(m => m.MatchId == matchId),
+                "The player's move should be persisted before surrender is requested.");
+
+        var surrender = await Data(await red.Client.PostAsJsonAsync(
+            $"/api/v1/matches/{matchId}/surrender", new { confirmed = true }));
+        var moveResponse = await moveTask;
+        Assert.Equal(HttpStatusCode.OK, moveResponse.StatusCode);
+        var moveResult = await Data(moveResponse);
+        Assert.Equal("finished", surrender.GetProperty("status").GetString());
+        Assert.Equal("finished", moveResult.GetProperty("status").GetString());
+
+        using var verify = Db();
+        var finalMatch = await verify.Matches.AsNoTracking().SingleAsync(m => m.Id == matchId);
+        var moves = await verify.Moves.AsNoTracking().Where(m => m.MatchId == matchId).OrderBy(m => m.Ply).ToListAsync();
+        Assert.Equal("finished", finalMatch.Status);
+        Assert.Equal("black", finalMatch.Winner);
+        Assert.InRange(moves.Count, 1, 2);
+        if (moves.Count == 2)
+        {
+            Assert.Equal("black", moves[1].Side);
+            Assert.NotNull(finalMatch.EndedAt);
+            Assert.True(moves[1].CreatedAt <= finalMatch.EndedAt.Value);
+        }
+    }
+
     public void Dispose() {foreach(var c in clients)c.Dispose();factory.Dispose();root.Dispose();Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();File.Delete(path);}
 
     private sealed class CaptureLogs : ILoggerProvider

@@ -114,9 +114,20 @@ public sealed class XiangqiRulesTests
     [Fact] public void Minimax_returns_a_legal_move_when_its_search_budget_expires()
     {
         var board = BoardInitializer.CreateInitialBoard();
-        var move = Minimax.FindBest(board,Side.Red,3,TimeSpan.FromTicks(1));
-        Assert.NotNull(move);
-        Assert.True(XiangqiRules.IsLegal(board,Side.Red,move));
+        var result = Minimax.FindBestWithStats(board,Side.Red,3,timeLimit:TimeSpan.FromTicks(1));
+        Assert.NotNull(result.BestMove);
+        Assert.True(XiangqiRules.IsLegal(board,Side.Red,result.BestMove));
+        Assert.InRange(result.CompletedDepth,0,3);
+    }
+    [Fact] public void Minimax_stops_when_cancelled_without_changing_the_board()
+    {
+        var board = BoardInitializer.CreateInitialBoard();
+        var original = BoardSerializer.Serialize(board);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(10));
+
+        Assert.Throws<OperationCanceledException>(() =>
+            Minimax.FindBest(board,Side.Red,3,TimeSpan.FromSeconds(5),cancellation.Token));
+        Assert.Equal(original,BoardSerializer.Serialize(board));
     }
     [Fact] public void Alpha_beta_preserves_minimax_score_reduces_nodes_and_leaves_board_unchanged()
     {
@@ -128,6 +139,8 @@ public sealed class XiangqiRulesTests
         var optimized = Minimax.FindBestWithStats(board, Side.Red, depth, alphaBeta: true, orderMoves: true);
 
         Assert.Equal(baseline.Score, optimized.Score);
+        Assert.Equal(depth, baseline.CompletedDepth);
+        Assert.Equal(depth, optimized.CompletedDepth);
         Assert.NotNull(baseline.BestMove);
         Assert.NotNull(optimized.BestMove);
         Assert.True(XiangqiRules.IsLegal(board, Side.Red, baseline.BestMove));
