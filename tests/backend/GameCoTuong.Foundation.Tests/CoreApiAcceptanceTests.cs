@@ -644,6 +644,38 @@ public sealed class CoreApiAcceptanceTests : IDisposable
             HttpStatusCode.Conflict));
     }
 
+    [Fact] public async Task GCT94_pvp_capture_reconnect_finish_close_and_read_only_replay()
+    {
+        var (red, black, roomId, id) = await Start();
+        await Data(await red.Client.PostAsJsonAsync($"/api/v1/matches/{id}/moves", Move(1)));
+        await Data(await black.Client.PostAsJsonAsync($"/api/v1/matches/{id}/moves", Move(2, "black-soldier-1", 0, 4)));
+        var capture = await Data(await red.Client.PostAsJsonAsync($"/api/v1/matches/{id}/moves", Move(3, row: 4)));
+        Assert.Equal("black-soldier-1", capture.GetProperty("lastMove").GetProperty("capturedPieceId").GetString());
+        using (var scope = factory.Services.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<GameService>().Presence(roomId, black.Id, false);
+        Assert.Equal("paused", (await Data(await red.Client.GetAsync($"/api/v1/matches/{id}"))).GetProperty("status").GetString());
+        await Data(await black.Client.PostAsync($"/api/v1/matches/{id}/reconnect", null));
+        var a = await Data(await red.Client.GetAsync($"/api/v1/matches/{id}"));
+        var b = await Data(await black.Client.GetAsync($"/api/v1/matches/{id}"));
+        Assert.Equal("playing", a.GetProperty("status").GetString());
+        Assert.Equal(a.GetProperty("pieces").GetRawText(), b.GetProperty("pieces").GetRawText());
+        Assert.Equal(a.GetProperty("sideToMove").GetString(), b.GetProperty("sideToMove").GetString());
+        await Data(await black.Client.PostAsJsonAsync($"/api/v1/matches/{id}/surrender", new { confirmed = true }));
+        await Data(await red.Client.PostAsync($"/api/v1/rooms/{roomId}/close", null));
+        var history = await Data(await red.Client.GetAsync($"/api/v1/matches/{id}/history"));
+        Assert.Equal(3, history.GetProperty("moveNumber").GetInt32());
+        var moves = history.GetProperty("moves").EnumerateArray().ToArray();
+        Assert.Equal(new[] { 1, 2, 3 }, moves.Select(m => m.GetProperty("ply").GetInt32()));
+        Assert.Equal(history.GetProperty("currentBoardJson").GetString(), moves[^1].GetProperty("boardSnapshotJson").GetString());
+        Assert.Equal("red", history.GetProperty("winner").GetString());
+        var outsider = await User("replay_outsider");
+        await Error(await outsider.Client.GetAsync($"/api/v1/matches/{id}/history"), HttpStatusCode.Forbidden);
+        await Data(await black.Client.GetAsync($"/api/v1/matches/{id}/history"));
+        using var verify = Db();
+        Assert.Equal(3, await verify.Moves.CountAsync(m => m.MatchId == id));
+        Assert.Equal(1, await verify.Matches.CountAsync(m => m.Id == id));
+    }
+
     public void Dispose() {foreach(var c in clients)c.Dispose();factory.Dispose();root.Dispose();Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();File.Delete(path);}
 
     private sealed class CaptureLogs : ILoggerProvider

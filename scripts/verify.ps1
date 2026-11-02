@@ -5,8 +5,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Backend restore failed.' }
     dotnet build GameCoTuong.sln -c Release --no-restore -m:1 -p:UseSharedCompilation=false
     if ($LASTEXITCODE -ne 0) { throw 'Backend build failed.' }
-    dotnet test GameCoTuong.sln -c Release --no-build --no-restore -m:1
+    dotnet test GameCoTuong.sln -c Release --no-build --no-restore -m:1 --logger 'trx;LogFileName=backend.trx' --results-directory (Join-Path $PWD 'artifacts/qa')
     if ($LASTEXITCODE -ne 0) { throw 'Backend tests failed.' }
+    node scripts/extract-performance.mjs
+    if ($LASTEXITCODE -ne 0) { throw 'Performance report missing.' }
     npm --prefix src/frontend ci
     if ($LASTEXITCODE -ne 0) { throw 'Frontend restore failed.' }
     npm --prefix src/frontend run lint

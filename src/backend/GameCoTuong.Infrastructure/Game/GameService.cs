@@ -763,7 +763,7 @@ public sealed class GameService(GameDbContext db, ILogger<GameService> logger)
             opponent = GetOpponent(match, userId),
             match.StartedAt, match.EndedAt,
             durationSeconds = Math.Max(0, ((match.EndedAt ?? DateTimeOffset.UtcNow) - match.StartedAt).TotalSeconds),
-            match.RuleSetVersion, match.InitialBoardJson, match.CurrentBoardJson,
+            match.RuleSetVersion, match.MoveNumber, match.InitialBoardJson, match.CurrentBoardJson,
             moves
         };
     }
