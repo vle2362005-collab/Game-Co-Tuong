@@ -27,6 +27,8 @@ onMounted(async () => {
   else error.value = 'Chưa kết nối trực tuyến. Nhấn tải lại để thử lại.'
 })
 onUnmounted(() => { disposers.forEach(fn => fn()); void auth.signalR.invoke('LeaveLobby').catch(() => {}) })
+function navigateToBot() { void router.push('/bot') }
+function navigateToRoom(id: string) { void router.push(`/rooms/${id}`) }
 </script>
 <template>
   <section class="lobby">
@@ -36,7 +38,7 @@ onUnmounted(() => { disposers.forEach(fn => fn()); void auth.signalR.invoke('Lea
         <strong>🤖 Chơi với Máy</strong>
         <p>Không cần đối thủ trực tuyến — chọn mức khó và đấu ngay!</p>
       </div>
-      <button class="btn-bot" @click="router.push('/bot')" id="lobby-play-bot-btn">🤖 Bắt đầu</button>
+      <button class="btn-bot" @click="navigateToBot()" id="lobby-play-bot-btn">🤖 Bắt đầu</button>
     </div>
     <p v-if="error" role="alert" class="error">{{ error }}</p>
     <form class="actions" @submit.prevent="createRoom">
@@ -49,7 +51,7 @@ onUnmounted(() => { disposers.forEach(fn => fn()); void auth.signalR.invoke('Lea
     <p v-if="loading">Đang tải phòng…</p><p v-else-if="!rooms.length">Chưa có phòng. Hãy tạo phòng đầu tiên.</p>
     <ul class="room-list"><li v-for="room in rooms" :key="room.id"><div><strong>{{ room.name }}</strong><br>Mã {{ room.code }} · {{ room.members.length }}/2 · {{ room.status }}</div>
       <button :disabled="busy || room.members.length === 2 || room.status !== 'waiting'" @click="joinCode(room.code)">Vào phòng</button>
-      <button v-if="room.members.some(m => m.userId === auth.user.value?.id)" @click="router.push(`/rooms/${room.id}`)">Trở lại</button>
+      <button v-if="room.members.some(m => m.userId === auth.user.value?.id)" @click="navigateToRoom(room.id)">Trở lại</button>
     </li></ul>
   </section>
 </template>
