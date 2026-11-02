@@ -9,9 +9,6 @@ namespace GameCoTuong.Api.Hubs;
 
 public class GameHub(IRoomAuthorizationService auth, GameService game, LiveConnections live, VideoCalls calls, ILogger<GameHub> logger) : Hub
 {
-    public GameHub(IRoomAuthorizationService auth, GameService game, LiveConnections live, VideoCalls calls)
-        : this(auth, game, live, calls, Microsoft.Extensions.Logging.Abstractions.NullLogger<GameHub>.Instance) { }
-
     public const string LobbyGroupName = "lobby";
     public static string GetRoomGroupName(Guid id) => $"room-{id}";
     public Guid? GetCallerUserId() => Guid.TryParse(Context.User?.FindFirstValue(ClaimTypes.NameIdentifier) ?? Context.User?.FindFirstValue("sub"), out var id) ? id : null;
