@@ -45,6 +45,7 @@ Camera cần HTTPS hoặc localhost. `VITE_ICE_SERVERS` nhận mảng `RTCIceSer
 | GCT-63/64/111 | `RoomChat.vue`, `GameHub.SendRoomMessage`, `GameService.Chat` |
 | GCT-68/69/70 | `src/backend/GameCoTuong.Engine/AI/Minimax.cs`, `XiangqiRules.Generate` |
 | GCT-65/66 | `GameHub.Signal`, `VideoCalls.cs`, `useVideoCall.ts`, `VideoCall.vue`, `videoCall.test.ts` |
+| GCT-85 | `GameFlowTests.cs`, `AuthorizationAndRoomAccessTests.cs`, `videoCall.test.ts`; [bảng kết quả](GCT-85-communication-test-results.md) |
 
 ## Kiểm tra
 

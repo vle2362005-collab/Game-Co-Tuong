@@ -692,10 +692,43 @@ public sealed class GameFlowTests : IDisposable
         var room=await Run(s=>s.Create(red,new(Guid.NewGuid(),"Chat")));
         var input=new ChatInput(Guid.NewGuid(),"<script>literal text</script>");
         var message=await Run(s=>s.Chat(room.Id,red,input)); var retry=await Run(s=>s.Chat(room.Id,red,input)); Assert.Equal(message.Id,retry.Id);
+        Assert.Equal("<script>literal text</script>",message.Content);
         await Assert.ThrowsAsync<GameFault>(()=>Run(s=>s.Chat(room.Id,outsider,input)));
+        Assert.Equal("VALIDATION_ERROR",(await Assert.ThrowsAsync<GameFault>(()=>Run(s=>s.Chat(room.Id,red,new(Guid.NewGuid(),"  "))))).Code);
+        Assert.Equal("VALIDATION_ERROR",(await Assert.ThrowsAsync<GameFault>(()=>Run(s=>s.Chat(room.Id,red,new(Guid.NewGuid(),new string('x',501)))))).Code);
         for(int i=0;i<4;i++) await Run(s=>s.Chat(room.Id,red,new(Guid.NewGuid(),$"Message {i}")));
         Assert.Equal("RATE_LIMITED",(await Assert.ThrowsAsync<GameFault>(()=>Run(s=>s.Chat(room.Id,red,new(Guid.NewGuid(),"Sixth"))))).Code);
-        Assert.Equal(5,(await Run(s=>s.Messages(room.Id,red))).Count);
+        var messages=await Run(s=>s.Messages(room.Id,red));
+        Assert.Equal(5,messages.Count);
+        Assert.Equal("<script>literal text</script>",messages[0].Content);
+    }
+    [Fact] public async Task Chat_rate_limit_does_not_change_match_state_or_block_moves_and_result()
+    {
+        var (room,matchId)=await Start();
+        for(var i=0;i<5;i++)
+            await Run(s=>s.Chat(room.Id,red,new(Guid.NewGuid(),$"Message {i}")));
+
+        var rateLimited=await Assert.ThrowsAsync<GameFault>(()=>
+            Run(s=>s.Chat(room.Id,red,new(Guid.NewGuid(),"Too fast"))));
+        Assert.Equal("RATE_LIMITED",rateLimited.Code);
+
+        await using(var db=Db())
+        {
+            var unchanged=await db.Matches.AsNoTracking().SingleAsync(m=>m.Id==matchId);
+            Assert.Equal("playing",unchanged.Status);
+            Assert.Equal(0,unchanged.MoveNumber);
+            Assert.Null(unchanged.Winner);
+        }
+
+        await Run(s=>s.Move(matchId,red,new(Guid.NewGuid(),1,"red-soldier-1",0,5)));
+        await Run(s=>s.End(matchId,black,false));
+
+        await using var verify=Db();
+        var final=await verify.Matches.AsNoTracking().SingleAsync(m=>m.Id==matchId);
+        Assert.Equal("finished",final.Status);
+        Assert.Equal("red",final.Winner);
+        Assert.Equal("resignation",final.ResultReason);
+        Assert.Single(await verify.Moves.Where(m=>m.MatchId==matchId).ToListAsync());
     }
     [Fact] public void Video_session_blocks_wrong_ids_wrong_answerer_and_stale_ice()
     {
