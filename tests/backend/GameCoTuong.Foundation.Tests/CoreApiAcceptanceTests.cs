@@ -481,7 +481,8 @@ public sealed class CoreApiAcceptanceTests : IDisposable
         var moveInput = Move(initial.GetProperty("version").GetInt64());
         var aiTimer = System.Diagnostics.Stopwatch.StartNew();
         var moved = await Data(await red.Client.PostAsJsonAsync($"/api/v1/matches/{matchId}/moves", moveInput));
-        Assert.True(aiTimer.Elapsed < TimeSpan.FromSeconds(5), "The bounded AI search should finish the move request promptly.");
+        Assert.True(aiTimer.Elapsed <= TimeSpan.FromSeconds(2),
+            $"A hard AI move should finish within the 1-2 second demo target; elapsed={aiTimer.Elapsed.TotalMilliseconds:F0} ms.");
         Assert.Equal(2, moved.GetProperty("moveNumber").GetInt32());
         Assert.Equal("red", moved.GetProperty("sideToMove").GetString());
         Assert.Equal("black", moved.GetProperty("lastMove").GetProperty("side").GetString());
