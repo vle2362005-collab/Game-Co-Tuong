@@ -34,6 +34,7 @@ export interface MatchHistoryItem {
   id: string
   roomId: string
   mode: string
+  aiDifficulty?: 'easy' | 'medium' | 'hard'
   status: string
   outcome: 'win' | 'loss' | 'draw' | 'cancelled' | 'in-progress'
   winner: string | null

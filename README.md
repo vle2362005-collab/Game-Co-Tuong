@@ -40,6 +40,10 @@ Mở **http://localhost:5173**, bấm **Kiểm tra máy chủ**. API chạy tạ
 | `src/frontend/tests` | Kiểm thử giao tiếp health bằng Vitest |
 | `docs` | Phạm vi, luật và hướng dẫn phát triển |
 
+## Chơi với máy
+
+Trong sảnh, chọn mức **Dễ**, **Vừa** hoặc **Khó** rồi bấm **Chơi với máy**. Người chơi luôn cầm Đỏ; máy cầm Đen và chọn nước bằng Minimax/Alpha-Beta với ngân sách suy nghĩ giới hạn theo mức khó. Nước của người và máy được xác thực, ghi lịch sử theo cùng bộ luật; trận có thể đầu hàng và xem lại trong mục lịch sử.
+
 ## Kiểm tra trước khi mở PR
 
 Từ thư mục gốc:

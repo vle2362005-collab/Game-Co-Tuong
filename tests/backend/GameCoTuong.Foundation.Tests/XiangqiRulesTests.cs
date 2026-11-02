@@ -4,11 +4,16 @@ using GameCoTuong.Engine.Model;
 using GameCoTuong.Engine.Rules;
 using GameCoTuong.Engine.AI;
 using GameCoTuong.Engine.Serialization;
+using Xunit.Abstractions;
 
 namespace GameCoTuong.Foundation.Tests;
 
 public sealed class XiangqiRulesTests
 {
+    private readonly ITestOutputHelper output;
+
+    public XiangqiRulesTests(ITestOutputHelper output) => this.output = output;
+
     internal static Piece P(string name, PieceType type, Side side, int col, int row) => new(name, type, side, new(col, row));
     internal static Board Fixture(params Piece[] extra) => new(new[] {
         P("red-general-1", PieceType.General, Side.Red, 4, 9), P("black-general-1", PieceType.General, Side.Black, 4, 0),
@@ -97,13 +102,94 @@ public sealed class XiangqiRulesTests
         Assert.NotNull(move); Assert.True(XiangqiRules.IsLegal(board,Side.Red,move));
         Assert.Equal(before,BoardSerializer.Serialize(board)); Assert.Null(Minimax.FindBest(Mate(true),Side.Black));
     }
-    [Fact] public void Minimax_prefers_immediate_checkmate()
+    [Fact] public void GCT12_minimax_finds_an_immediate_winning_move()
     {
         var board = Fixture(P("red-chariot-1",PieceType.Chariot,Side.Red,3,1),
             P("red-chariot-2",PieceType.Chariot,Side.Red,5,1), P("red-soldier-1",PieceType.Soldier,Side.Red,4,2));
+        var original = BoardSerializer.Serialize(board);
         var move = Minimax.FindBest(board,Side.Red,1);
         Assert.NotNull(move);
+        Assert.True(XiangqiRules.IsLegal(board, Side.Red, move));
         var result = XiangqiRules.Result(board.ApplyMove(move.PieceId,move.To,out _),Side.Black);
         Assert.True(result.Finished); Assert.Equal(Side.Red,result.Winner);
+        Assert.Equal(original, BoardSerializer.Serialize(board));
+    }
+    [Fact] public void GCT12_minimax_returns_a_legal_move_that_escapes_check()
+    {
+        var board = Fixture(P("red-chariot-1", PieceType.Chariot, Side.Red, 4, 2));
+        var original = BoardSerializer.Serialize(board);
+        Assert.True(XiangqiRules.IsInCheck(board, Side.Black));
+        Assert.NotEmpty(XiangqiRules.Generate(board, Side.Black));
+
+        var result = Minimax.FindBestWithStats(board, Side.Black, depth: 2);
+
+        Assert.NotNull(result.BestMove);
+        Assert.True(XiangqiRules.IsLegal(board, Side.Black, result.BestMove));
+        var afterMove = board.ApplyMove(result.BestMove.PieceId, result.BestMove.To, out _);
+        Assert.False(XiangqiRules.IsInCheck(afterMove, Side.Black));
+        Assert.Equal(original, BoardSerializer.Serialize(board));
+    }
+    [Theory]
+    [InlineData(true, "checkmate")]
+    [InlineData(false, "stalemate")]
+    public void GCT12_minimax_recognizes_positions_without_legal_moves(bool inCheck, string reason)
+    {
+        var board = Mate(inCheck);
+        var original = BoardSerializer.Serialize(board);
+
+        var result = Minimax.FindBestWithStats(board, Side.Black, depth: 2);
+        var positionResult = XiangqiRules.Result(board, Side.Black);
+
+        Assert.Null(result.BestMove);
+        Assert.True(positionResult.Finished);
+        Assert.Equal(Side.Red, positionResult.Winner);
+        Assert.Equal(reason, positionResult.Reason);
+        Assert.Equal(original, BoardSerializer.Serialize(board));
+    }
+    [Fact] public void Minimax_returns_a_legal_move_when_its_search_budget_expires()
+    {
+        var board = BoardInitializer.CreateInitialBoard();
+        var result = Minimax.FindBestWithStats(board,Side.Red,3,timeLimit:TimeSpan.FromTicks(1));
+        Assert.NotNull(result.BestMove);
+        Assert.True(XiangqiRules.IsLegal(board,Side.Red,result.BestMove));
+        Assert.InRange(result.CompletedDepth,0,3);
+    }
+    [Fact] public void Minimax_stops_when_cancelled_without_changing_the_board()
+    {
+        var board = BoardInitializer.CreateInitialBoard();
+        var original = BoardSerializer.Serialize(board);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(10));
+
+        Assert.Throws<OperationCanceledException>(() =>
+            Minimax.FindBest(board,Side.Red,3,TimeSpan.FromSeconds(5),cancellation.Token));
+        Assert.Equal(original,BoardSerializer.Serialize(board));
+    }
+    [Fact] public void Alpha_beta_preserves_minimax_score_reduces_nodes_and_leaves_board_unchanged()
+    {
+        var board = BoardInitializer.CreateInitialBoard();
+        var original = BoardSerializer.Serialize(board);
+        const int depth = 3;
+
+        var baseline = Minimax.FindBestWithStats(board, Side.Red, depth, alphaBeta: false, orderMoves: false);
+        var optimized = Minimax.FindBestWithStats(board, Side.Red, depth, alphaBeta: true, orderMoves: true);
+
+        Assert.Equal(baseline.Score, optimized.Score);
+        Assert.Equal(depth, baseline.CompletedDepth);
+        Assert.Equal(depth, optimized.CompletedDepth);
+        Assert.True(baseline.Nodes > 0);
+        Assert.True(optimized.Nodes > 0);
+        Assert.True(baseline.Elapsed > TimeSpan.Zero);
+        Assert.True(optimized.Elapsed > TimeSpan.Zero);
+        Assert.NotNull(baseline.BestMove);
+        Assert.NotNull(optimized.BestMove);
+        Assert.True(XiangqiRules.IsLegal(board, Side.Red, baseline.BestMove));
+        Assert.True(XiangqiRules.IsLegal(board, Side.Red, optimized.BestMove));
+        Assert.True(optimized.Nodes < baseline.Nodes,
+            $"Expected ordered alpha-beta to visit fewer nodes; baseline={baseline.Nodes}, optimized={optimized.Nodes}.");
+        Assert.Equal(original, BoardSerializer.Serialize(board));
+
+        output.WriteLine($"Depth {depth} baseline: score={baseline.Score}, nodes={baseline.Nodes}, elapsed={baseline.Elapsed.TotalMilliseconds:F2} ms.");
+        output.WriteLine($"Depth {depth} alpha-beta + tactical ordering: score={optimized.Score}, nodes={optimized.Nodes}, elapsed={optimized.Elapsed.TotalMilliseconds:F2} ms.");
+        output.WriteLine($"Nodes reduced: {(1d - (double)optimized.Nodes / baseline.Nodes):P1}.");
     }
 }

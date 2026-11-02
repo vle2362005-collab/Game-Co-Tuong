@@ -13,6 +13,7 @@ using GameCoTuong.Domain.ValueObjects;
 using GameCoTuong.Engine.Model;
 using GameCoTuong.Engine.Rules;
 using GameCoTuong.Engine.Serialization;
+using GameCoTuong.Infrastructure.Game;
 using GameCoTuong.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -452,6 +453,166 @@ public sealed class CoreApiAcceptanceTests : IDisposable
         Assert.Equal("draw-agreement",accepted.GetProperty("resultReason").GetString());
         Assert.Equal("draw-agreement",accepted.GetProperty("result").GetProperty("reasonCode").GetString());
     }
+
+    [Fact] public async Task GCT1_player_can_start_ai_match_move_legally_surrender_and_view_history()
+    {
+        var red = await User("ai_player");
+        var invalid = await red.Client.PostAsJsonAsync("/api/v1/matches/ai",
+            new { requestId = Guid.NewGuid(), difficulty = "expert" });
+        Assert.Equal("VALIDATION_ERROR", await Error(invalid, HttpStatusCode.BadRequest));
+
+        var requestId = Guid.NewGuid();
+        var createInput = new { requestId, difficulty = "hard" };
+        var initial = await Data(await red.Client.PostAsJsonAsync("/api/v1/matches/ai", createInput));
+        var duplicate = await Data(await red.Client.PostAsJsonAsync("/api/v1/matches/ai", createInput));
+        var matchId = initial.GetProperty("id").GetGuid();
+        var roomId = initial.GetProperty("roomId").GetGuid();
+        Assert.Equal(matchId, duplicate.GetProperty("id").GetGuid());
+        Assert.Equal("pve", initial.GetProperty("mode").GetString());
+        Assert.Equal("hard", initial.GetProperty("aiDifficulty").GetString());
+        Assert.Equal("red", initial.GetProperty("sideToMove").GetString());
+        Assert.Equal("red", Assert.Single(initial.GetProperty("players").EnumerateArray()).GetProperty("side").GetString());
+
+        var room = await Data(await red.Client.GetAsync($"/api/v1/rooms/{roomId}"));
+        Assert.Single(room.GetProperty("members").EnumerateArray());
+        var lobby = await Data(await red.Client.GetAsync("/api/v1/rooms"));
+        Assert.DoesNotContain(lobby.EnumerateArray(), listedRoom => listedRoom.GetProperty("id").GetGuid() == roomId);
+
+        var moveInput = Move(initial.GetProperty("version").GetInt64());
+        var aiTimer = System.Diagnostics.Stopwatch.StartNew();
+        var moved = await Data(await red.Client.PostAsJsonAsync($"/api/v1/matches/{matchId}/moves", moveInput));
+        Assert.True(aiTimer.Elapsed <= TimeSpan.FromSeconds(2),
+            $"A hard AI move should finish within the 1-2 second demo target; elapsed={aiTimer.Elapsed.TotalMilliseconds:F0} ms.");
+        Assert.Equal(2, moved.GetProperty("moveNumber").GetInt32());
+        Assert.Equal("red", moved.GetProperty("sideToMove").GetString());
+        Assert.Equal("black", moved.GetProperty("lastMove").GetProperty("side").GetString());
+
+        await Data(await red.Client.PostAsJsonAsync($"/api/v1/matches/{matchId}/moves", moveInput));
+        using (var verify = Db())
+        {
+            var match = await verify.Matches.AsNoTracking().SingleAsync(m => m.Id == matchId);
+            var moves = await verify.Moves.AsNoTracking().Where(m => m.MatchId == matchId).OrderBy(m => m.Ply).ToListAsync();
+            Assert.Equal(2, moves.Count);
+            Assert.Equal(new[] { "red", "black" }, moves.Select(m => m.Side));
+            var board = BoardSerializer.Deserialize(match.InitialBoardJson);
+            foreach (var savedMove in moves)
+            {
+                var side = savedMove.Side == "red" ? Side.Red : Side.Black;
+                var legalMove = new LegalMove(savedMove.PieceId, new Position(savedMove.ToCol, savedMove.ToRow));
+                Assert.True(XiangqiRules.IsLegal(board, side, legalMove));
+                board = board.ApplyMove(savedMove.PieceId, legalMove.To, out _);
+            }
+            Assert.Equal(match.CurrentBoardJson, BoardSerializer.Serialize(board));
+        }
+
+        using (var scope = factory.Services.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<GameService>().RecoverAfterRestart();
+        var paused = await Data(await red.Client.GetAsync($"/api/v1/matches/{matchId}"));
+        Assert.Equal("paused", paused.GetProperty("status").GetString());
+        var resumed = await Data(await red.Client.PostAsync($"/api/v1/matches/{matchId}/reconnect", null));
+        Assert.Equal("playing", resumed.GetProperty("status").GetString());
+        var resumedRoom = await Data(await red.Client.GetAsync($"/api/v1/rooms/{roomId}"));
+        Assert.True(resumedRoom.GetProperty("members").EnumerateArray().Single().GetProperty("connected").GetBoolean());
+
+        var surrender = await Data(await red.Client.PostAsJsonAsync(
+            $"/api/v1/matches/{matchId}/surrender", new { confirmed = true }));
+        Assert.Equal("finished", surrender.GetProperty("status").GetString());
+        Assert.Equal("black", surrender.GetProperty("winner").GetString());
+        Assert.Equal("surrender", surrender.GetProperty("reasonCode").GetString());
+        Assert.Equal("MATCH_NOT_PLAYING", await Error(
+            await red.Client.PostAsJsonAsync($"/api/v1/matches/{matchId}/moves",
+                Move(surrender.GetProperty("version").GetInt64(), request: Guid.NewGuid())),
+            HttpStatusCode.Conflict));
+        using (var afterGame = Db())
+            Assert.Equal(2, await afterGame.Moves.CountAsync(m => m.MatchId == matchId));
+
+        var history = await Data(await red.Client.GetAsync("/api/v1/matches/history?mode=pve&outcome=loss"));
+        var item = Assert.Single(history.GetProperty("items").EnumerateArray());
+        Assert.Equal(matchId, item.GetProperty("id").GetGuid());
+        Assert.Equal("hard", item.GetProperty("aiDifficulty").GetString());
+        Assert.Equal("Máy", item.GetProperty("opponent").GetProperty("displayName").GetString());
+        Assert.Equal("loss", item.GetProperty("outcome").GetString());
+        Assert.Equal("surrender", item.GetProperty("reasonCode").GetString());
+    }
+
+    [Fact] public async Task GCT72_surrender_while_ai_is_thinking_never_applies_a_stale_move()
+    {
+        var red = await User("ai_cancel");
+        var initial = await Data(await red.Client.PostAsJsonAsync("/api/v1/matches/ai",
+            new { requestId = Guid.NewGuid(), difficulty = "hard" }));
+        var matchId = initial.GetProperty("id").GetGuid();
+        var moveTask = red.Client.PostAsJsonAsync(
+            $"/api/v1/matches/{matchId}/moves", Move(initial.GetProperty("version").GetInt64()));
+
+        var moveDeadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        while (DateTimeOffset.UtcNow < moveDeadline)
+        {
+            using var progress = Db();
+            if (await progress.Moves.AnyAsync(m => m.MatchId == matchId)) break;
+            await Task.Delay(5);
+        }
+        using (var verifyPlayerMove = Db())
+            Assert.True(await verifyPlayerMove.Moves.AnyAsync(m => m.MatchId == matchId),
+                "The player's move should be persisted before surrender is requested.");
+
+        var surrender = await Data(await red.Client.PostAsJsonAsync(
+            $"/api/v1/matches/{matchId}/surrender", new { confirmed = true }));
+        var moveResponse = await moveTask;
+        Assert.Equal(HttpStatusCode.OK, moveResponse.StatusCode);
+        var moveResult = await Data(moveResponse);
+        Assert.Equal("finished", surrender.GetProperty("status").GetString());
+        Assert.Equal("finished", moveResult.GetProperty("status").GetString());
+
+        using var verify = Db();
+        var finalMatch = await verify.Matches.AsNoTracking().SingleAsync(m => m.Id == matchId);
+        var moves = await verify.Moves.AsNoTracking().Where(m => m.MatchId == matchId).OrderBy(m => m.Ply).ToListAsync();
+        Assert.Equal("finished", finalMatch.Status);
+        Assert.Equal("black", finalMatch.Winner);
+        Assert.InRange(moves.Count, 1, 2);
+        if (moves.Count == 2)
+        {
+            Assert.Equal("black", moves[1].Side);
+            Assert.NotNull(finalMatch.EndedAt);
+            Assert.True(moves[1].CreatedAt <= finalMatch.EndedAt.Value);
+        }
+    }
+
+    [Fact] public async Task GCT90_player_and_machine_share_match_flow_and_history()
+    {
+        var red = await User("ai_flow");
+        var initial = await Data(await red.Client.PostAsJsonAsync("/api/v1/matches/ai",
+            new { requestId = Guid.NewGuid(), difficulty = "medium" }));
+        var matchId = initial.GetProperty("id").GetGuid();
+        Assert.Equal("pve", initial.GetProperty("mode").GetString());
+        Assert.Equal("red", initial.GetProperty("playerSide").GetString());
+        Assert.Equal("red", initial.GetProperty("sideToMove").GetString());
+        Assert.Equal("medium", initial.GetProperty("aiDifficulty").GetString());
+
+        var afterTurn = await Data(await red.Client.PostAsJsonAsync(
+            $"/api/v1/matches/{matchId}/moves", Move(initial.GetProperty("version").GetInt64())));
+        Assert.Equal(2, afterTurn.GetProperty("moveNumber").GetInt32());
+        Assert.Equal("red", afterTurn.GetProperty("sideToMove").GetString());
+        Assert.Equal("black", afterTurn.GetProperty("lastMove").GetProperty("side").GetString());
+
+        var finished = await Data(await red.Client.PostAsJsonAsync(
+            $"/api/v1/matches/{matchId}/surrender", new { confirmed = true }));
+        Assert.Equal("finished", finished.GetProperty("status").GetString());
+
+        var history = await Data(await red.Client.GetAsync($"/api/v1/matches/{matchId}/history"));
+        Assert.Equal("pve", history.GetProperty("mode").GetString());
+        Assert.Equal("finished", history.GetProperty("status").GetString());
+        Assert.Equal("surrender", history.GetProperty("reasonCode").GetString());
+        Assert.Equal("Máy", history.GetProperty("opponent").GetProperty("displayName").GetString());
+        var moves = history.GetProperty("moves").EnumerateArray().ToArray();
+        Assert.Equal(new[] { "red", "black" }, moves.Select(move => move.GetProperty("side").GetString()));
+        Assert.Equal(history.GetProperty("currentBoardJson").GetString(),
+            moves[^1].GetProperty("boardSnapshotJson").GetString());
+        Assert.Equal("MATCH_NOT_PLAYING", await Error(
+            await red.Client.PostAsJsonAsync($"/api/v1/matches/{matchId}/moves",
+                Move(finished.GetProperty("version").GetInt64(), request: Guid.NewGuid())),
+            HttpStatusCode.Conflict));
+    }
+
     public void Dispose() {foreach(var c in clients)c.Dispose();factory.Dispose();root.Dispose();Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();File.Delete(path);}
 
     private sealed class CaptureLogs : ILoggerProvider

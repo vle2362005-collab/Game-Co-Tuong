@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { createMatchSync } from '../src/composables/useMatchSync'
 import type { Match } from '../src/api/game'
 function state(version: number, id = 'match'): Match {
-  return { id, roomId: 'room', version, status: 'playing', moveNumber: version - 1, sideToMove: version % 2 ? 'red' : 'black', pieces: [], winner: null, resultReason: null, check: false, players: [], drawOfferedBy: null }
+  return { id, roomId: 'room', mode: 'pvp', aiDifficulty: 'medium', version, status: 'playing', moveNumber: version - 1, sideToMove: version % 2 ? 'red' : 'black', pieces: [], winner: null, resultReason: null, reasonCode: null, result: null, check: false, players: [], drawOfferId: null, drawOfferedBy: null, drawCreatedAt: null, drawExpiresAt: null }
 }
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r }); return { promise, resolve } }
 describe('GCT-82 confirmed snapshots', () => {
