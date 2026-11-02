@@ -38,7 +38,7 @@ Camera cần HTTPS hoặc localhost. `VITE_ICE_SERVERS` nhận mảng `RTCIceSer
 | GCT-27/28/29/30/7/32/33/34/35 | `src/backend/GameCoTuong.Api/Endpoints/AuthEndpoints.cs`, `Hubs/GameHub.cs`, `src/frontend/src/composables/useAuth.ts`, `api/signalr.ts` |
 | GCT-43/106/107 | `Engine/Model/GameState.cs`, `tests/backend/GameCoTuong.Foundation.Tests/XiangqiRulesTests.cs`, `GameFlowTests.cs`, `TestDatabase.cs` |
 | GCT-50/51/52/53/54/55/56/57/58/59/60 | `src/backend/GameCoTuong.Engine/Rules/XiangqiRules.cs` |
-| GCT-62 | [Đặc tả lặp thế](repetition-scope.md) |
+| GCT-62 / GCT-112 | [Đặc tả và đối chiếu luật lặp](repetition-scope.md); ba mẫu lặp đã chạy qua luồng GameService |
 | GCT-36/37/39/40/44/46/73/74/86/8 | `src/backend/GameCoTuong.Infrastructure/Game/GameService.cs`, API `RoomEndpoints.cs`, `MatchEndpoints.cs` |
 | GCT-104 | `AuthorizationAndRoomAccessTests.cs`, `GameFlowTests.cs`, browser check |
 | GCT-41/38/45/49/105/81 | `src/frontend/src/components/XiangqiBoard.vue`, `boardLayout.ts`, `LobbyView.vue`, `RoomView.vue`, `GameView.vue` |

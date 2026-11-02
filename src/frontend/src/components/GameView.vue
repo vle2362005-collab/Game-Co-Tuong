@@ -136,6 +136,7 @@ onUnmounted(() => { active = false; if (poll) clearInterval(poll); window.remove
     <p v-if="sync.refreshing.value && (!match || sync.needsRefresh.value)" role="status">Đang đồng bộ bàn cờ…</p>
     <template v-if="match">
       <div class="heading"><h1>Ván cờ · {{ room?.code || 'Lịch sử' }}</h1><span v-if="match.mode==='pve' || match.mode==='ai'">Bạn cầm Đỏ · Máy cầm Đen · Mức {{ difficultyLabel }}</span><span v-else>Bạn cầm {{ side==='red' ? 'Đỏ' : 'Đen' }}</span></div>
+      <p class="rule-limit" role="note">Giới hạn luật demo: chưa phân xử lặp thế, chiếu dai hoặc tróc dai theo WXF; vị trí lặp ba lần không tự hòa. Không áp dụng quy tắc hòa ba lần của cờ vua.</p>
       <p v-if="match.result" role="status"><strong>Kết thúc: {{ resultLabel }}</strong></p>
       <p v-else>Lượt {{ match.sideToMove==='red' ? 'Đỏ' : 'Đen' }} · Nước {{ match.moveNumber }} <strong v-if="match.check">· Chiếu Tướng!</strong> <span v-if="aiThinking" role="status">· Máy đang suy nghĩ…</span> <span v-else-if="!isAiMatch && !auth.signalR.isConnected.value">· Đang nối lại…</span></p>
       <div class="game-layout"><div><XiangqiBoard :pieces="match.pieces" :flipped="side==='black'" :selected="selected" :disabled="!canMove" :destinations="destinations" :last-move="match.lastMove" :checked-general-id="checkedGeneralId" @cell="cell"/>
@@ -146,5 +147,5 @@ onUnmounted(() => { active = false; if (poll) clearInterval(poll); window.remove
   </section>
 </template>
 <style scoped>
-.game{width:100%}.game-layout{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(260px,1fr);gap:20px}.heading{display:flex;justify-content:space-between;align-items:center}.controls{display:flex;gap:12px;justify-content:center;margin-top:16px}button{padding:11px 18px;cursor:pointer}.error{color:#a12525}aside{display:grid;align-content:start;gap:18px}@media(max-width:760px){.game-layout{grid-template-columns:1fr}.heading{display:block}}
+.game{width:100%}.game-layout{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(260px,1fr);gap:20px}.heading{display:flex;justify-content:space-between;align-items:center}.rule-limit{padding:10px 12px;border-left:3px solid #a47722;background:#fff8e6;color:#604b1c}.controls{display:flex;gap:12px;justify-content:center;margin-top:16px}button{padding:11px 18px;cursor:pointer}.error{color:#a12525}aside{display:grid;align-content:start;gap:18px}@media(max-width:760px){.game-layout{grid-template-columns:1fr}.heading{display:block}}
 </style>
