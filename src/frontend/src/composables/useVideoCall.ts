@@ -5,6 +5,39 @@ export interface VideoDependencies {
   media?: () => Promise<MediaStream>
   peer?: () => RTCPeerConnection
 }
+const DEFAULT_ICE_SERVERS: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }]
+
+export function resolveIceConfiguration(
+  serversValue: string | undefined = import.meta.env.VITE_ICE_SERVERS,
+  policyValue: string | undefined = import.meta.env.VITE_ICE_TRANSPORT_POLICY
+): Pick<RTCConfiguration, 'iceServers' | 'iceTransportPolicy'> {
+  let iceServers = DEFAULT_ICE_SERVERS
+  if (serversValue?.trim()) {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(serversValue)
+    } catch {
+      throw new Error('VITE_ICE_SERVERS must be a valid JSON array.')
+    }
+    if (!Array.isArray(parsed) || parsed.length === 0 || !parsed.every(server =>
+      typeof server === 'object' && server !== null &&
+      (typeof server.urls === 'string' && server.urls.length > 0 ||
+        Array.isArray(server.urls) && server.urls.length > 0 && server.urls.every((url: unknown) => typeof url === 'string' && url.length > 0)) &&
+      (server.username === undefined || typeof server.username === 'string') &&
+      (server.credential === undefined || typeof server.credential === 'string')
+    )) {
+      throw new Error('VITE_ICE_SERVERS must be a non-empty array of valid RTCIceServer entries.')
+    }
+    iceServers = parsed as RTCIceServer[]
+  }
+
+  const iceTransportPolicy = policyValue?.trim() || 'all'
+  if (iceTransportPolicy !== 'all' && iceTransportPolicy !== 'relay') {
+    throw new Error('VITE_ICE_TRANSPORT_POLICY must be "all" or "relay".')
+  }
+  return { iceServers, iceTransportPolicy }
+}
+
 export function createVideoCall(deps: VideoDependencies) {
   const status = ref('idle'), error = ref(''), incoming = shallowRef<VideoSignal | null>(null)
   const local = shallowRef<MediaStream | null>(null), remote = shallowRef<MediaStream | null>(null)
@@ -39,7 +72,7 @@ export function createVideoCall(deps: VideoDependencies) {
     const stream = await (deps.media?.() ?? navigator.mediaDevices.getUserMedia({ audio: true, video: { width: 640, height: 360 } }))
     if (generation !== expectedGeneration) { stream.getTracks().forEach(t => t.stop()); return null }
     local.value = stream
-    const configuration: RTCConfiguration = { iceServers: JSON.parse(import.meta.env.VITE_ICE_SERVERS || '[{"urls":"stun:stun.l.google.com:19302"}]') }
+    const configuration = resolveIceConfiguration()
     const connection = deps.peer?.() ?? new RTCPeerConnection(configuration)
     pc = connection
     stream.getTracks().forEach(t => connection.addTrack(t, stream))

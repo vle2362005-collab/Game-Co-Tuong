@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { createVideoCall, type VideoSignal } from '../src/composables/useVideoCall'
+import { createVideoCall, resolveIceConfiguration, type VideoSignal } from '../src/composables/useVideoCall'
 import { boardPoint, displayCell } from '../src/components/boardLayout'
 function fixture() {
   const tracks = [{ kind: 'audio', enabled: true, stop: vi.fn() }, { kind: 'video', enabled: true, stop: vi.fn() }]
@@ -15,6 +15,26 @@ function fixture() {
 const offer: VideoSignal = { roomId: 'room', senderId: 'other', recipientId: 'me', callId: 'call', type: 'offer', data: '{"type":"offer","sdp":"test"}' }
 afterEach(() => vi.restoreAllMocks())
 describe('Video call lifecycle', () => {
+  it('resolves STUN/TURN environment configuration and relay-only test mode', () => {
+    const servers = [
+      { urls: 'stun:stun.example.net:3478' },
+      { urls: ['turn:turn.example.net:3478?transport=udp', 'turns:turn.example.net:5349'], username: 'ephemeral-user', credential: 'ephemeral-password' }
+    ]
+    expect(resolveIceConfiguration(JSON.stringify(servers), 'relay')).toEqual({
+      iceServers: servers,
+      iceTransportPolicy: 'relay'
+    })
+    expect(resolveIceConfiguration(undefined, undefined)).toEqual({
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+      iceTransportPolicy: 'all'
+    })
+  })
+  it('rejects invalid ICE server JSON and transport policies', () => {
+    expect(() => resolveIceConfiguration('{broken', 'all')).toThrow('VITE_ICE_SERVERS must be a valid JSON array.')
+    expect(() => resolveIceConfiguration('[]', 'all')).toThrow('VITE_ICE_SERVERS must be a non-empty array')
+    expect(() => resolveIceConfiguration('[{"urls":"turn:turn.example.net","username":4}]', 'all')).toThrow('VITE_ICE_SERVERS must be a non-empty array')
+    expect(() => resolveIceConfiguration(undefined, 'stun')).toThrow('VITE_ICE_TRANSPORT_POLICY must be "all" or "relay".')
+  })
   it('waits for explicit acceptance, buffers ICE, and stops every track on hangup', async () => {
     const { call, tracks, send, media, peer } = fixture()
     await call.receive(offer); expect(media).not.toHaveBeenCalled(); expect(call.status.value).toBe('incoming')
@@ -32,6 +52,19 @@ describe('Video call lifecycle', () => {
     expect(send.mock.calls[0][0].type).toBe('reject')
     await call.receive({ ...offer, type: 'ice', data: '{}' })
     expect(media).not.toHaveBeenCalled(); expect(call.status.value).toBe('idle')
+  })
+  it('reports denied device permission, returns to idle, and allows retry', async () => {
+    const { call, media, tracks } = fixture()
+    media.mockRejectedValueOnce(new DOMException('Permission denied', 'NotAllowedError'))
+    await call.start('other')
+    expect(call.error.value).toBe('Bạn chưa cấp quyền camera/micro.')
+    expect(call.status.value).toBe('idle')
+    expect(call.local.value).toBeNull()
+
+    await call.start('other')
+    expect(call.status.value).toBe('calling')
+    await call.hangup()
+    tracks.forEach(t => expect(t.stop).toHaveBeenCalledOnce())
   })
   it('cancelling a pending permission request stops the stream when it eventually arrives', async () => {
     const { call, media, tracks } = fixture()
