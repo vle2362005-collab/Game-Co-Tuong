@@ -101,4 +101,12 @@ describe('GCT-114 match replay', () => {
     expect(() => buildReplayFrames(serialized(initialPieces), differentBoard, [captureMove]))
       .toThrow('Bàn cờ phát lại không khớp snapshot cuối của trận.')
   })
+
+  it('does not invent moves when required move records are missing', () => {
+    expect(() => buildReplayFrames(
+      serialized(initialPieces),
+      blackGeneralMove.boardSnapshotJson!,
+      []
+    )).toThrow('Bàn cờ phát lại không khớp snapshot cuối của trận.')
+  })
 })
