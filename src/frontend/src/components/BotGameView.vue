@@ -136,7 +136,7 @@ async function refresh() {
   } catch { /* silent */ }
 }
 
-function backToLobby() { router.push('/lobby') }
+function backToLobby() { void router.push('/lobby') }
 function playAgain() { phase.value = 'select'; match.value = null; selected.value = null; error.value = '' }
 
 // Fallback polling: if SignalR bot move not received within 12s, poll manually
@@ -144,7 +144,7 @@ let botTimeout: number | null = null
 function scheduleBotTimeout() {
   if (botTimeout !== null) window.clearTimeout(botTimeout)
   if (botThinking.value) {
-    botTimeout = window.setTimeout(async () => { if (botThinking.value) await refresh() }, 12000)
+    botTimeout = window.setTimeout(() => { void (async () => { if (botThinking.value) await refresh() })() }, 12000)
   }
 }
 watch(botThinking, val => { if (val) scheduleBotTimeout(); else { if (botTimeout !== null) window.clearTimeout(botTimeout) } })
