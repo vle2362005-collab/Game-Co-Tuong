@@ -304,7 +304,10 @@ public sealed class CoreApiAcceptanceTests : IDisposable
         await Error(await red.Client.GetAsync("/api/v1/matches/history?pageSize=101"),HttpStatusCode.BadRequest);
         await Error(await red.Client.GetAsync("/api/v1/matches/history?outcome=unknown"),HttpStatusCode.BadRequest);
     }
-    [Fact] public async Task GCT116_closed_room_preserves_match_result_moves_and_player_access()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GCT116_closed_room_preserves_match_result_moves_and_player_access(bool automaticCleanup)
     {
         var (red,black,roomId,id)=await Start();
         var redRequest=Guid.NewGuid();
@@ -320,6 +323,13 @@ public sealed class CoreApiAcceptanceTests : IDisposable
         Assert.Equal("finished",firstEnd.GetProperty("status").GetString());
         Assert.Equal("red",firstEnd.GetProperty("winner").GetString());
         Assert.Equal("resignation",firstEnd.GetProperty("resultReason").GetString());
+
+        if (automaticCleanup)
+        {
+            using var db = Db();
+            (await db.Matches.SingleAsync(m => m.Id == id)).EndedAt = DateTimeOffset.UtcNow.AddMinutes(-6);
+            await db.SaveChangesAsync();
+        }
 
         var redDetails=await Data(await red.Client.GetAsync($"/api/v1/matches/{id}/history"));
         var redMoves=await Data(await red.Client.GetAsync($"/api/v1/matches/{id}/moves"));
@@ -359,9 +369,30 @@ public sealed class CoreApiAcceptanceTests : IDisposable
             Assert.Equal(2,await db.Moves.CountAsync(m=>m.MatchId==id));
         }
 
-        var closed=await Data(await red.Client.PostAsync($"/api/v1/rooms/{roomId}/close",null));
-        Assert.Equal("closed",closed.GetProperty("status").GetString());
-        Assert.Empty(closed.GetProperty("members").EnumerateArray());
+        if (automaticCleanup)
+        {
+            using var scope = factory.Services.CreateScope();
+            var service = scope.ServiceProvider.GetRequiredService<GameService>();
+            var closed = Assert.Single(await service.CleanupRooms());
+            Assert.Equal(roomId, closed.Id);
+            Assert.Equal("closed", closed.Status);
+            Assert.Empty(closed.Members);
+            var live = scope.ServiceProvider.GetRequiredService<LiveConnections>();
+            live.Add("cleanup-test-connection", red.Id, roomId);
+            await scope.ServiceProvider.GetRequiredService<GameCoTuong.Application.Game.IRoomCleanupNotifier>()
+                .NotifyClosed(closed, CancellationToken.None);
+            Assert.Contains("RoomStateChanged", events.Messages);
+            Assert.Contains("LobbyChanged", events.Messages);
+            Assert.Contains("CallEnded", events.Messages);
+            Assert.False(live.Has(red.Id, roomId));
+            Assert.Empty(await service.CleanupRooms());
+        }
+        else
+        {
+            var closed=await Data(await red.Client.PostAsync($"/api/v1/rooms/{roomId}/close",null));
+            Assert.Equal("closed",closed.GetProperty("status").GetString());
+            Assert.Empty(closed.GetProperty("members").EnumerateArray());
+        }
 
         Assert.Equal(redDetails.GetRawText(),(await Data(await red.Client.GetAsync($"/api/v1/matches/{id}/history"))).GetRawText());
         Assert.Equal(redMoves.GetRawText(),(await Data(await red.Client.GetAsync($"/api/v1/matches/{id}/moves"))).GetRawText());

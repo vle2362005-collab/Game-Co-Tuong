@@ -3,11 +3,14 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuth } from '../composables/useAuth'
 import { createMatchSync } from '../composables/useMatchSync'
+import { createMatchActions } from '../composables/useMatchActions'
+import { useSnapshotClock } from '../composables/useSnapshotClock'
 import { gameApi, type Match, type Room } from '../api/game'
 import { ApiClientError } from '../api/client'
 import XiangqiBoard from './XiangqiBoard.vue'
 import RoomChat from './RoomChat.vue'
 import VideoCall from './VideoCall.vue'
+import MatchRecoveryPanel from './MatchRecoveryPanel.vue'
 const auth = useAuth(), route = useRoute(), router = useRouter(), id = String(route.params.id)
 const room = ref<Room | null>(null), selected = ref<string | null>(null), error = ref(''), busy = ref(false)
 const pendingMove = ref<{ pieceId: string; col: number; row: number; version: number; requestId: string } | null>(null)
@@ -16,9 +19,14 @@ let active = true
 let poll: ReturnType<typeof setInterval> | null = null
 const sync = createMatchSync(id, () => gameApi.match(id), onSnapshot, e => { error.value = e instanceof Error ? e.message : String(e) })
 const match = sync.snapshot
+const remaining = useSnapshotClock(match)
 const isAiMatch = computed(() => match.value?.mode === 'pve' || match.value?.mode === 'ai')
 const side = computed(() => match.value?.players.find(p => p.userId === auth.user.value?.id)?.side || 'red')
 const opponent = computed(() => room.value?.members.find(p => p.userId !== auth.user.value?.id))
+const actions = createMatchActions(id, () => match.value, () => side.value, () => window.confirm('Bạn xác nhận đầu hàng?'))
+const drawSeconds = computed(() => remaining(match.value?.drawExpiresAt))
+const hasDrawOffer = computed(() => !!match.value?.drawOfferId && (drawSeconds.value === null || drawSeconds.value > 0))
+const incomingDraw = computed(() => hasDrawOffer.value && match.value?.drawOfferedBy !== side.value)
 const difficultyLabel = computed(() => (({ easy: 'Dễ', medium: 'Vừa', hard: 'Khó' } as Record<string, string>)[match.value?.aiDifficulty || ''] || match.value?.aiDifficulty || 'Vừa'))
 const aiThinking = ref(false)
 const resultLabel = computed(() => {
@@ -109,10 +117,14 @@ async function sendMove() {
     selected.value = null
   } finally { busy.value = false; aiThinking.value = false }
 }
-async function end(draw = false) {
-  if (busy.value || (!draw && !window.confirm('Bạn xác nhận đầu hàng?'))) return
+async function act(action: () => Promise<Match | null>) {
+  if (busy.value) return
   busy.value = true; error.value = ''
-  try { sync.accept(await gameApi.end(id, draw), true); await load() } catch (e) { error.value = String(e) } finally { busy.value = false }
+  try { const next = await action(); if (next && active) sync.accept(next, true) } catch (e) { if (active) error.value = String(e) } finally { busy.value = false }
+}
+async function respondDraw(accept: boolean) {
+  const offerId = match.value?.drawOfferId
+  if (offerId) await act(() => actions.respondDraw(offerId, accept))
 }
 async function leave(destination = '/lobby') {
   if (!match.value) return
@@ -138,9 +150,17 @@ onUnmounted(() => { active = false; if (poll) clearInterval(poll); window.remove
       <div class="heading"><h1>Ván cờ · {{ room?.code || 'Lịch sử' }}</h1><span v-if="match.mode==='pve' || match.mode==='ai'">Bạn cầm Đỏ · Máy cầm Đen · Mức {{ difficultyLabel }}</span><span v-else>Bạn cầm {{ side==='red' ? 'Đỏ' : 'Đen' }}</span></div>
       <p v-if="match.result" role="status"><strong>Kết thúc: {{ resultLabel }}</strong></p>
       <p v-else>Lượt {{ match.sideToMove==='red' ? 'Đỏ' : 'Đen' }} · Nước {{ match.moveNumber }} <strong v-if="match.check">· Chiếu Tướng!</strong> <span v-if="aiThinking" role="status">· Máy đang suy nghĩ…</span> <span v-else-if="!isAiMatch && !auth.signalR.isConnected.value">· Đang nối lại…</span></p>
+      <MatchRecoveryPanel v-if="!match.result" :match="match" :connected="isAiMatch || auth.signalR.isConnected.value" :busy="busy || sync.refreshing.value" @retry="retrySync"/>
       <div class="game-layout"><div><XiangqiBoard :pieces="match.pieces" :flipped="side==='black'" :selected="selected" :disabled="!canMove" :destinations="destinations" :last-move="match.lastMove" :checked-general-id="checkedGeneralId" @cell="cell"/>
-        <div class="controls" v-if="match.status==='playing'"><button :disabled="busy" @click="end()">Đầu hàng</button><button v-if="match.mode!=='pve' && match.mode!=='ai'" :disabled="busy" @click="end(true)">{{ match.drawOfferedBy && match.drawOfferedBy!==side ? 'Đồng ý hòa' : 'Đề nghị hòa' }}</button></div>
-        <div v-else class="controls"><button @click="leave()">Rời phòng, về sảnh</button><button @click="leave('/history')">Xem lịch sử</button></div>
+        <div class="controls" v-if="match.status==='playing'">
+          <button :disabled="busy" @click="act(actions.surrender)">Đầu hàng</button>
+          <template v-if="!isAiMatch">
+            <template v-if="incomingDraw"><button :disabled="busy" @click="respondDraw(true)">Đồng ý hòa</button><button :disabled="busy" @click="respondDraw(false)">Từ chối hòa</button></template>
+            <button v-else :disabled="busy || !!match.drawOfferId" @click="act(actions.offerDraw)">{{ hasDrawOffer ? 'Đã gửi đề nghị hòa' : 'Đề nghị hòa' }}</button>
+            <span v-if="hasDrawOffer" role="status">{{ drawSeconds === null ? 'Đang lấy thời hạn' : `Còn ${drawSeconds} giây` }}</span>
+          </template>
+        </div>
+        <div v-else-if="match.result" class="controls"><button @click="leave()">Rời phòng, về sảnh</button><button @click="leave('/history')">Xem lịch sử</button></div>
       </div><aside v-if="room && !match.result && match.mode!=='pve' && match.mode!=='ai'"><RoomChat :room-id="match.roomId"/><VideoCall :room-id="match.roomId" :opponent-id="opponent?.userId || null"/></aside></div>
     </template><p v-else>Đang tải ván cờ…</p>
   </section>

@@ -474,6 +474,101 @@ public sealed class GameFlowTests : IDisposable
         try { await Run(s => s.Leave(roomId, userId, close)); return true; }
         catch (GameFault) { return false; }
     }
+    [Fact] public async Task GCT79_start_racing_host_close_keeps_one_consistent_room_state()
+    {
+        var room = await Run(s => s.Create(red, new(Guid.NewGuid(), "Start or close")));
+        await Run(s => s.Join(black, room.Code));
+        await Run(s => s.Ready(room.Id, red, true));
+        await Run(s => s.Ready(room.Id, black, true));
+        async Task<bool> StartRoom()
+        {
+            try { await Run(s => s.Start(room.Id, red, new(Guid.NewGuid()))); return true; }
+            catch (GameFault fault) { Assert.Equal("ROOM_CLOSED", fault.Code); return false; }
+        }
+        var results = await Task.WhenAll(StartRoom(), Leave(room.Id, red, true));
+        Assert.Single(results, result => result);
+        await using var db = Db();
+        var saved = await db.Rooms.SingleAsync(r => r.Id == room.Id);
+        var active = await db.Matches.CountAsync(m => m.RoomId == room.Id && (m.Status == "playing" || m.Status == "paused"));
+        Assert.Equal(saved.Status == "closed" ? 0 : 1, active);
+        Assert.Equal(saved.Status == "closed" ? 0 : 2,
+            await db.RoomMemberships.CountAsync(m => m.RoomId == room.Id && m.LeftAt == null));
+    }
+
+    [Fact] public async Task GCT79_close_racing_cleanup_keeps_history_and_releases_seats_once()
+    {
+        var (room, id) = await Start();
+        await Run(s => s.Move(id, red, new(Guid.NewGuid(), 1, "red-soldier-1", 0, 5)));
+        await Run(s => s.Surrender(id, black, true));
+        await using (var db = Db())
+        {
+            (await db.Matches.SingleAsync(m => m.Id == id)).EndedAt = DateTimeOffset.UtcNow.AddMinutes(-6);
+            await db.SaveChangesAsync();
+        }
+        var before = JsonSerializer.Serialize(await Run(s => s.MatchDetails(id, red)));
+        await Task.WhenAll((Task)Leave(room.Id, red, true), Run(s => s.CleanupRooms()));
+        Assert.Empty(await Run(s => s.CleanupRooms()));
+        Assert.Equal(before, JsonSerializer.Serialize(await Run(s => s.MatchDetails(id, red))));
+        await using var verify = Db();
+        Assert.Equal("closed", (await verify.Rooms.SingleAsync(r => r.Id == room.Id)).Status);
+        Assert.Equal(0, await verify.RoomMemberships.CountAsync(m => m.RoomId == room.Id && m.LeftAt == null));
+        Assert.Single(await verify.Moves.Where(m => m.MatchId == id).ToListAsync());
+    }
+
+    [Fact] public async Task GCT78_restart_during_disconnect_cancels_if_only_one_player_returns()
+    {
+        var (room, id) = await Start();
+        await Run(s => s.Move(id, red, new(Guid.NewGuid(), 1, "red-soldier-1", 0, 5)));
+        await Run(s => s.Presence(room.Id, black, false));
+        await Run(s => s.RecoverAfterRestart());
+        await Run(s => s.Reconnect(id, red));
+        await using (var db = Db())
+        {
+            var match = await db.Matches.SingleAsync(m => m.Id == id);
+            Assert.Equal("serverRestart", match.RecoveryReason);
+            Assert.Equal("paused", match.Status);
+            match.BlackDeadlineAt = DateTimeOffset.UtcNow.AddMilliseconds(-1);
+            await db.SaveChangesAsync();
+        }
+        Assert.Equal(1, await Run(s => s.ExpireRecoveries()));
+        await using var verify = Db();
+        var result = await verify.Matches.SingleAsync(m => m.Id == id);
+        Assert.Equal("cancelled", result.Status);
+        Assert.Equal("serverRestart", result.ResultReason);
+        Assert.Null(result.Winner);
+        Assert.Single(await verify.Moves.Where(m => m.MatchId == id).ToListAsync());
+    }
+
+    [Fact] public async Task GCT116_cleanup_protects_playing_paused_and_recovery_windows()
+    {
+        var (room, id) = await Start();
+        await using (var db = Db())
+        {
+            (await db.Rooms.SingleAsync(r => r.Id == room.Id)).LastActivityAt = DateTimeOffset.UtcNow.AddHours(-1);
+            await db.SaveChangesAsync();
+        }
+        Assert.Empty(await Run(s => s.CleanupRooms()));
+        await Run(s => s.Presence(room.Id, black, false));
+        Assert.Empty(await Run(s => s.CleanupRooms()));
+
+        var waiting = await Run(s => s.Create(outsider, new(Guid.NewGuid(), "Protected waiting room")));
+        await using (var db = Db())
+        {
+            (await db.Rooms.SingleAsync(r => r.Id == waiting.Id)).LastActivityAt = DateTimeOffset.UtcNow.AddMinutes(-16);
+            (await db.RoomMemberships.SingleAsync(m => m.RoomId == waiting.Id)).ReconnectDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(1);
+            await db.SaveChangesAsync();
+        }
+        Assert.Empty(await Run(s => s.CleanupRooms()));
+        await using (var db = Db())
+        {
+            (await db.RoomMemberships.SingleAsync(m => m.RoomId == waiting.Id)).ReconnectDeadlineAt = DateTimeOffset.UtcNow.AddSeconds(-1);
+            await db.SaveChangesAsync();
+        }
+        Assert.Equal(waiting.Id, Assert.Single(await Run(s => s.CleanupRooms())).Id);
+        await using var verify = Db();
+        Assert.Equal("paused", (await verify.Matches.SingleAsync(m => m.Id == id)).Status);
+    }
+
     [Fact] public async Task Save_failure_rolls_back_move_board_and_turn()
     {
         var (_,id)=await Start();
@@ -615,7 +710,7 @@ public sealed class GameFlowTests : IDisposable
         await using(var db=Db())
         {
             var match=await db.Matches.SingleAsync(m=>m.Id==id);
-            Assert.Equal("disconnect",match.RecoveryReason);
+            Assert.Equal("serverRestart",match.RecoveryReason);
             Assert.Equal(blackDeadline,match.BlackDeadlineAt);
             Assert.True(match.RedDeadlineAt>DateTimeOffset.UtcNow);
             Assert.False(await db.RoomMemberships.Where(m=>m.RoomId==room.Id && m.LeftAt==null).AnyAsync(m=>m.IsConnected));
