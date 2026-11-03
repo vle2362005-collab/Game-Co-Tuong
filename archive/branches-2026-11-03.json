@@ -1,0 +1,344 @@
+{
+  "purpose": "Archive obsolete branch heads before cleanup. This is a recovery snapshot, not an application release. The application tree is unchanged from main except for this manifest. Unique branch histories are retained as commit parents; their code is not integrated into main/develop.",
+  "date": "2026-11-03",
+  "main": "11cd1bd4aeaed588f202eca758742e4ebf5a70d4",
+  "develop": "8db68d8a13141f6835ae9bdbac0b0e3ec064a87c",
+  "branches": [
+    {
+      "name": "GCT-25-database-erd",
+      "sha": "dc45e0856e477a494a9858687bff1daaa5d0ed1d",
+      "mergedIntoDevelop": true,
+      "filesUniqueToBranch": []
+    },
+    {
+      "name": "GCT-26-ef-migrations",
+      "sha": "8ae0c1e18eb6428a204e7585d6e83bb62364c49a",
+      "mergedIntoDevelop": true,
+      "filesUniqueToBranch": []
+    },
+    {
+      "name": "GCT-27-register",
+      "sha": "f115e640b16ff984007f6a3cfad7673a9196cc45",
+      "mergedIntoDevelop": true,
+      "filesUniqueToBranch": []
+    },
+    {
+      "name": "GCT-29-authorize",
+      "sha": "a0dff47713f2e722dc39a4e818377c68f46a3181",
+      "mergedIntoDevelop": true,
+      "filesUniqueToBranch": []
+    },
+    {
+      "name": "GCT-30-session-policy",
+      "sha": "f6f0144f78544aaa4e4c882f52102d9f9b0d5978",
+      "mergedIntoDevelop": true,
+      "filesUniqueToBranch": []
+    },
+    {
+      "name": "GCT-32-vue-shell",
+      "sha": "bbf9052501ec0ef103328728cbfa4c098cb2c00b",
+      "mergedIntoDevelop": true,
+      "filesUniqueToBranch": []
+    },
+    {
+      "name": "GCT-33-auth-forms",
+      "sha": "d9a22d7f85bd0f1bb2b4090d165d950260b07ed4",
+      "mergedIntoDevelop": true,
+      "filesUniqueToBranch": []
+    },
+    {
+      "name": "GCT-34-auth-state",
+      "sha": "172647d362f2486e6f58e60bdc792c8670f3c073",
+      "mergedIntoDevelop": true,
+      "filesUniqueToBranch": []
+    },
+    {
+      "name": "GCT-35-signalr-hub",
+      "sha": "b249e4231d346b70769d6e8902b3326c391624ef",
+      "mergedIntoDevelop": true,
+      "filesUniqueToBranch": []
+    },
+    {
+      "name": "GCT-42-engine-model",
+      "sha": "ade1082c5dfcd02afed34f17e1b263eec21f54c6",
+      "mergedIntoDevelop": true,
+      "filesUniqueToBranch": []
+    },
+    {
+      "name": "GCT-7-logout",
+      "sha": "64965ea6432f8fb34bb0a89ba80a113b1e39f81a",
+      "mergedIntoDevelop": true,
+      "filesUniqueToBranch": []
+    },
+    {
+      "name": "feature/GCT-108-match-history",
+      "sha": "e1203fe160ea5d92f86a408b27a8d92cb41a9a69",
+      "mergedIntoDevelop": true,
+      "filesUniqueToBranch": []
+    },
+    {
+      "name": "feature/GCT-109-reconnect",
+      "sha": "af4c24dcd9777c817600ce9049e8897ee7dbdd78",
+      "mergedIntoDevelop": false,
+      "filesUniqueToBranch": [
+        "docs/GCT-109-reconnect.md",
+        "docs/development.md",
+        "src/backend/GameCoTuong.Api/GameCoTuong.Api.csproj",
+        "src/backend/GameCoTuong.Api/Program.cs",
+        "src/backend/GameCoTuong.Api/Realtime/MatchConnectionRegistry.cs",
+        "src/backend/GameCoTuong.Api/Realtime/MatchHub.cs",
+        "src/backend/GameCoTuong.Api/Realtime/MatchReconnectExpiryPolicy.cs",
+        "src/backend/GameCoTuong.Api/Realtime/MatchReconnectRegistration.cs",
+        "src/backend/GameCoTuong.Api/Realtime/MatchReconnectService.cs",
+        "src/backend/GameCoTuong.Api/Realtime/MatchReconnectState.cs",
+        "src/backend/GameCoTuong.Api/Realtime/ReconnectDeadlineWorker.cs",
+        "src/backend/GameCoTuong.Api/Realtime/ReconnectWindow.cs",
+        "src/frontend/package-lock.json",
+        "src/frontend/package.json",
+        "src/frontend/src/components/MatchReconnectPanel.vue",
+        "tests/backend/GameCoTuong.Foundation.Tests/MatchReconnectTests.cs",
+        "tests/backend/GameCoTuong.Foundation.Tests/packages.lock.json"
+      ]
+    },
+    {
+      "name": "feature/GCT-11-video-call",
+      "sha": "27252f5c701fce46eed4c1598519501e09810991",
+      "mergedIntoDevelop": true,
+      "filesUniqueToBranch": []
+    },
+    {
+      "name": "feature/GCT-112",
+      "sha": "3610fb0ff5d9e216e2cb8013077e1286d0c7d78a",
+      "mergedIntoDevelop": true,
+      "filesUniqueToBranch": []
+    },
+    {
+      "name": "feature/GCT-113-choi-mot-tran-voi-may",
+      "sha": "76dc5a22035b125afdeb5f8e64e01e3f8b2a0a50",
+      "mergedIntoDevelop": true,
+      "filesUniqueToBranch": []
+    },
+    {
+      "name": "feature/GCT-113-play-vs-bot",
+      "sha": "a690183ed89bb0839c6f50a8ddf641cfb2998419",
+      "mergedIntoDevelop": false,
+      "filesUniqueToBranch": [
+        "src/backend/GameCoTuong.Api/Endpoints/PveEndpoints.cs",
+        "src/backend/GameCoTuong.Api/Program.cs",
+        "src/backend/GameCoTuong.Infrastructure/DependencyInjection.cs",
+        "src/backend/GameCoTuong.Infrastructure/Game/BotGameService.cs",
+        "src/frontend/src/api/pve.ts",
+        "src/frontend/src/components/BotGameView.vue",
+        "src/frontend/src/components/LobbyView.vue",
+        "src/frontend/src/router/index.ts"
+      ]
+    },
+    {
+      "name": "feature/GCT-114-match-replay",
+      "sha": "a188379e29706b36195ecaefd2db55cf2dcd95b7",
+      "mergedIntoDevelop": false,
+      "filesUniqueToBranch": [
+        "docs/GCT-114-replay.md",
+        "docs/requirements.md",
+        "src/frontend/src/api/game.ts",
+        "src/frontend/src/components/HistoryView.vue",
+        "src/frontend/src/components/ReplayView.vue",
+        "src/frontend/src/replay/replay.ts",
+        "src/frontend/src/router/index.ts",
+        "src/frontend/tests/replay.test.ts",
+        "src/frontend/tests/router.test.ts",
+        "tests/backend/GameCoTuong.Foundation.Tests/GameFlowTests.cs"
+      ]
+    },
+    {
+      "name": "feature/GCT-114-s4-closeout",
+      "sha": "dc13822f09c38ec86672f05a26000784884976e7",
+      "mergedIntoDevelop": true,
+      "filesUniqueToBranch": []
+    },
+    {
+      "name": "feature/GCT-116-s4-recovery-controls",
+      "sha": "01da606f48ef1f4cdb8710e7aa381e0b0621ac0f",
+      "mergedIntoDevelop": true,
+      "filesUniqueToBranch": []
+    },
+    {
+      "name": "feature/GCT-15-project-foundation",
+      "sha": "96b34a6a4a4666e40a6ab53e85041f50feb0708d",
+      "mergedIntoDevelop": false,
+      "filesUniqueToBranch": [
+        "README.md",
+        "contracts/examples.json",
+        "contracts/openapi.json",
+        "contracts/schemas.json",
+        "contracts/signalr.json",
+        "docs/GCT-20-handover.md",
+        "docs/architecture.md",
+        "docs/contracts.md",
+        "docs/diagrams/match-lifecycle.mmd",
+        "docs/diagrams/room-lifecycle.mmd",
+        "docs/lifecycle.md",
+        "requirements-contracts.txt",
+        "scripts/validate_contracts.py",
+        "tests/test_contracts.py"
+      ]
+    },
+    {
+      "name": "feature/GCT-19-requirements",
+      "sha": "052cc73edf21f6f8f97c84fe0988a9b11c67e537",
+      "mergedIntoDevelop": false,
+      "filesUniqueToBranch": [
+        "docs/diagrams/match-lifecycle.mmd",
+        "docs/diagrams/room-lifecycle.mmd",
+        "docs/lifecycle.md"
+      ]
+    },
+    {
+      "name": "feature/GCT-20-contracts",
+      "sha": "81f65ca67af35adff8c0dbb4d82e7953a3b9b4e0",
+      "mergedIntoDevelop": false,
+      "filesUniqueToBranch": [
+        "README.md",
+        "contracts/examples.json",
+        "contracts/openapi.json",
+        "contracts/schemas.json",
+        "contracts/signalr.json",
+        "docs/GCT-20-handover.md",
+        "docs/architecture.md",
+        "docs/contracts.md",
+        "docs/diagrams/match-lifecycle.mmd",
+        "docs/diagrams/room-lifecycle.mmd",
+        "docs/lifecycle.md",
+        "requirements-contracts.txt",
+        "scripts/validate_contracts.py",
+        "tests/test_contracts.py"
+      ]
+    },
+    {
+      "name": "feature/GCT-21-repository",
+      "sha": "72c33192e87f61170d27b977d918078de8ed4416",
+      "mergedIntoDevelop": true,
+      "filesUniqueToBranch": []
+    },
+    {
+      "name": "feature/GCT-22-jira-workflow",
+      "sha": "8ab5e6a86079600704158d1afdabac389bed94c0",
+      "mergedIntoDevelop": true,
+      "filesUniqueToBranch": []
+    },
+    {
+      "name": "feature/GCT-23-ci",
+      "sha": "e0ff87f6c0dd4c9b4e2fcc2136cd5c8273b668f7",
+      "mergedIntoDevelop": true,
+      "filesUniqueToBranch": []
+    },
+    {
+      "name": "feature/GCT-24-wireframes",
+      "sha": "d223a3d102b5219735ead9df591ae86f1e0c14bb",
+      "mergedIntoDevelop": true,
+      "filesUniqueToBranch": []
+    },
+    {
+      "name": "feature/GCT-27-sprint3-completion",
+      "sha": "abf0818589993bd077bde774892cd1547e32d937",
+      "mergedIntoDevelop": true,
+      "filesUniqueToBranch": []
+    },
+    {
+      "name": "feature/GCT-28-login-jwt",
+      "sha": "30b4c69452ae2a71deda33c10d3e911a70d3b5b7",
+      "mergedIntoDevelop": true,
+      "filesUniqueToBranch": []
+    },
+    {
+      "name": "feature/GCT-48-connection-presence",
+      "sha": "1adebe154db1eac6059aeaa837c2c8576d9a1dd2",
+      "mergedIntoDevelop": false,
+      "filesUniqueToBranch": [
+        "docs/GCT-109-reconnect.md",
+        "docs/development.md",
+        "src/backend/GameCoTuong.Api/GameCoTuong.Api.csproj",
+        "src/backend/GameCoTuong.Api/Program.cs",
+        "src/backend/GameCoTuong.Api/Realtime/MatchConnectionRegistry.cs",
+        "src/backend/GameCoTuong.Api/Realtime/MatchHub.cs",
+        "src/backend/GameCoTuong.Api/Realtime/MatchReconnectExpiryPolicy.cs",
+        "src/backend/GameCoTuong.Api/Realtime/MatchReconnectRegistration.cs",
+        "src/backend/GameCoTuong.Api/Realtime/MatchReconnectService.cs",
+        "src/backend/GameCoTuong.Api/Realtime/MatchReconnectState.cs",
+        "src/backend/GameCoTuong.Api/Realtime/ReconnectDeadlineWorker.cs",
+        "src/backend/GameCoTuong.Api/Realtime/ReconnectWindow.cs",
+        "src/frontend/package-lock.json",
+        "src/frontend/package.json",
+        "src/frontend/src/components/MatchReconnectPanel.vue",
+        "tests/backend/GameCoTuong.Foundation.Tests/MatchReconnectTests.cs",
+        "tests/backend/GameCoTuong.Foundation.Tests/packages.lock.json"
+      ]
+    },
+    {
+      "name": "feature/GCT-75-reconnect",
+      "sha": "4410c6dd40315948e9d3698c857c984394c5b761",
+      "mergedIntoDevelop": false,
+      "filesUniqueToBranch": [
+        "Directory.Packages.props",
+        "docs/development.md",
+        "src/backend/GameCoTuong.Api/GameCoTuong.Api.csproj",
+        "src/backend/GameCoTuong.Api/Hubs/MatchHub.cs",
+        "src/backend/GameCoTuong.Api/Program.cs",
+        "src/backend/GameCoTuong.Api/Reconnect/MatchConnectionRegistry.cs",
+        "src/backend/GameCoTuong.Api/Reconnect/MatchReconnectService.cs",
+        "src/backend/GameCoTuong.Api/Reconnect/MatchReconnectState.cs",
+        "src/backend/GameCoTuong.Api/Reconnect/ReconnectTimeoutRegistry.cs",
+        "src/backend/GameCoTuong.Api/packages.lock.json",
+        "src/frontend/package-lock.json",
+        "src/frontend/package.json",
+        "src/frontend/src/App.vue",
+        "src/frontend/src/api/matchReconnect.ts",
+        "src/frontend/src/style.css",
+        "src/frontend/tests/matchReconnect.test.ts",
+        "tests/backend/GameCoTuong.Foundation.Tests/ApiSmokeTests.cs",
+        "tests/backend/GameCoTuong.Foundation.Tests/MatchConnectionRegistryTests.cs",
+        "tests/backend/GameCoTuong.Foundation.Tests/packages.lock.json"
+      ]
+    },
+    {
+      "name": "feature/GCT-76-disconnect-timeout",
+      "sha": "cd5b780083a73ff4583fd4f7058905fdb16a8b8f",
+      "mergedIntoDevelop": false,
+      "filesUniqueToBranch": [
+        "docs/development.md",
+        "src/backend/GameCoTuong.Application/Services/MatchReconnectService.cs",
+        "src/backend/GameCoTuong.Application/Services/ReconnectTimeoutRegistry.cs",
+        "src/backend/GameCoTuong.Infrastructure/DependencyInjection.cs",
+        "tests/backend/GameCoTuong.Foundation.Tests/ReconnectTimeoutTests.cs"
+      ]
+    },
+    {
+      "name": "feature/GCT-77-room-cleanup",
+      "sha": "048c6e447dd8f9f455fdcf83aa9897d877f6bcd7",
+      "mergedIntoDevelop": false,
+      "filesUniqueToBranch": [
+        "Directory.Packages.props",
+        "docs/requirements.md",
+        "src/backend/GameCoTuong.Api/Program.cs",
+        "src/backend/GameCoTuong.Api/Services/RoomCleanupWorker.cs",
+        "src/backend/GameCoTuong.Infrastructure/DependencyInjection.cs",
+        "src/backend/GameCoTuong.Infrastructure/Persistence/RoomCleanupService.cs",
+        "tests/backend/GameCoTuong.Foundation.Tests/GameCoTuong.Foundation.Tests.csproj",
+        "tests/backend/GameCoTuong.Foundation.Tests/RoomCleanupTests.cs",
+        "tests/backend/GameCoTuong.Foundation.Tests/packages.lock.json"
+      ]
+    },
+    {
+      "name": "feature/GCT-82-s4-core-acceptance",
+      "sha": "b0129c12800f36acd34b1c3f1c9195e53974d2c7",
+      "mergedIntoDevelop": true,
+      "filesUniqueToBranch": []
+    },
+    {
+      "name": "feature/GCT-85-communication-tests",
+      "sha": "9fcc41f85a3560ba209affdbd62830d97c8d0fa5",
+      "mergedIntoDevelop": true,
+      "filesUniqueToBranch": []
+    }
+  ]
+}
