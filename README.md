@@ -1,41 +1,61 @@
-> Cập nhật 26/10/2026: ruleset [25888788](https://github.com/vle2362005-collab/Game-Co-Tuong/settings/rules/25888788) đã Active cho main/develop, được xác minh lại qua API. Chỉ user trưởng nhóm bypass qua PR. Các đoạn mô tả chưa áp dụng bên dưới là baseline trước khi cấu hình; không còn là trạng thái hiện tại. Chưa thử bằng tài khoản thành viên.
-
 # Game Cờ Tướng
 
-Vue/TypeScript và ASP.NET Core: tài khoản, phòng hai người, luật cờ, SignalR, chat/video, phục hồi, PvE Minimax/Alpha-Beta, lịch sử và xem lại từng nước.
+Đồ án cuối kỳ môn **Quản lý dự án với Jira**: xây dựng web chơi cờ Tướng, đồng thời thực hành lập kế hoạch, chia Sprint, phân công và theo dõi tiến độ bằng Jira; quản lý mã nguồn, kiểm thử và review qua GitHub Pull Request.
 
-## Chạy và bàn giao
+## Chức năng chính
 
-Cài **.NET SDK 10.0.403**, **Node 24.22.1**, **npm 11.x**. Clone repo, cập nhật `develop`, checkout đúng commit cần kiểm tra.
+- Đăng ký, đăng nhập và xác thực JWT.
+- Tạo/tham gia phòng, sẵn sàng và chơi hai người theo thời gian thực.
+- Kiểm tra luật, lượt đi, chiếu, đầu hàng và đề nghị hòa.
+- Chơi với máy bằng Minimax và Alpha-Beta ở ba mức độ.
+- Chat, gọi video, phục hồi kết nối, lưu lịch sử và xem lại từng nước.
 
-- [Cài đặt, SQL Server/JWT/CORS/HTTPS/TURN, sử dụng và rollback](docs/release/runbook.md).
-- [Kết quả kiểm thử, p50/p95 và phần chưa nghiệm thu](docs/release/verification.md).
-- [Phân tích/thiết kế](docs/release/analysis-design.md), [kịch bản bảo vệ](docs/release/demo.md), [bàn giao](docs/release/handover.md).
+## Công nghệ
 
-```sh
-# Kiểm tra toàn bộ (hoặc ./scripts/verify.ps1 trên PowerShell)
-bash scripts/verify.sh
-# Đóng gói API + web + SQL + manifest (hoặc ./scripts/package-demo.ps1)
-bash scripts/package-demo.sh
-# Smoke test bản publish qua HTTP, DB/khóa/tài khoản tạm
-node scripts/smoke-demo.mjs
+| Thành phần | Công nghệ |
+|---|---|
+| Frontend | Vue 3, TypeScript, Vite |
+| Backend | ASP.NET Core, Entity Framework Core, SignalR |
+| Dữ liệu và kiểm thử | SQL Server; SQLite cho local/test; xUnit, Vitest |
+
+## Cài đặt và chạy
+
+Cài **.NET SDK 10.0.403**, **Node.js 24.22.1**, **npm 11.x**.
+
+```powershell
+git clone --branch main https://github.com/vle2362005-collab/Game-Co-Tuong.git
+cd Game-Co-Tuong
+dotnet restore GameCoTuong.sln --locked-mode
+npm.cmd --prefix src/frontend ci
+Copy-Item src/frontend/.env.example src/frontend/.env.local
 ```
 
-Để chơi: làm theo runbook cấu hình DB/JWT rồi chạy API tại `http://localhost:5000`, frontend `npm --prefix src/frontend run dev` tại `http://localhost:5173`. Hai tài khoản tự đăng ký → tạo/join phòng → ready/start. Trong sảnh có chơi máy; từ lịch sử có xem lại chỉ đọc với nút đầu/lùi/tiến/cuối.
+Cấu hình database, migration và khóa JWT theo [hướng dẫn chạy](docs/release/runbook.md). SQL Server 2014 cần bổ sung cấu hình EF tương thích mức 120 và kiểm tra trên máy thực tế. Giữ connection string và khóa riêng trong cấu hình local, ngoài Git.
 
-SQL Server là cấu hình demo có worker phục hồi tự động. SQLite tạm phục vụ kiểm thử/local, worker tự động bị tắt. Camera cần HTTPS hoặc localhost; cuộc gọi khác mạng cần xác minh TURN thực. Không có mật khẩu/credential dùng chung trong repo.
+Mở hai cửa sổ PowerShell tại thư mục dự án:
 
-## Mã nguồn và tài liệu
+```powershell
+# Cửa sổ 1: backend
+dotnet run --project src/backend/GameCoTuong.Api --no-launch-profile --urls http://localhost:5000
 
-| Thư mục | Nội dung |
-|---|---|
-| src/frontend | Vue, API/SignalR client, bàn cờ, video và replay |
-| src/backend/GameCoTuong.Api | REST/Hub, danh tính, log và lỗi |
-| src/backend/GameCoTuong.Infrastructure | GameService, EF Core, migration và worker |
-| src/backend/GameCoTuong.Engine | Bộ luật, bàn cờ, Minimax/Alpha-Beta |
-| src/backend/GameCoTuong.Domain / Application | Entity/value object và hợp đồng |
-| tests/backend, src/frontend/tests | Kiểm thử tự động |
+# Cửa sổ 2: frontend
+npm.cmd --prefix src/frontend run dev
+```
 
-[Phạm vi](docs/requirements.md), [luật](docs/rules.md), [ERD](docs/database/erd.md), [video và giới hạn](docs/sprint3.md), [giới hạn WXF](docs/repetition-scope.md), [CI](docs/ci.md).
+Truy cập **http://localhost:5173**. Đăng ký hai tài khoản → tạo/tham gia phòng → cả hai sẵn sàng → chủ phòng bắt đầu. Kiểm tra toàn bộ bằng `./scripts/verify.ps1` trên PowerShell hoặc `bash scripts/verify.sh` trên Bash.
 
-Tách nhánh có mã Jira, mở PR vào `develop`, gắn PR/code/kiểm thử trong description. Trưởng nhóm review và merge; `main` nhận bản ổn định qua PR. [Quy trình](CONTRIBUTING.md), [Jira](docs/jira-workflow.md), [bảo vệ nhánh](.github/rulesets/README.md).
+## Cấu trúc và tài liệu
+
+- `src/frontend`: giao diện, REST/SignalR client, video và replay.
+- `src/backend`: API, Domain, Application, Infrastructure và Engine luật/AI.
+- `tests/backend`, `src/frontend/tests`: kiểm thử tự động; `docs`: tài liệu dự án.
+
+[Yêu cầu](docs/requirements.md) · [Thiết kế](docs/release/analysis-design.md) · [CSDL/ERD](docs/database/erd.md) · [Kiểm thử](docs/release/verification.md) · [Kịch bản demo](docs/release/demo.md)
+
+## Quản lý với Jira và GitHub
+
+[Jira GCT](https://vle2362005.atlassian.net/jira/software/c/projects/GCT/boards/36/backlog) quản lý Epic, Story, Task và Sprint. Mỗi công việc gắn mã GCT với nhánh, commit và PR; thẻ Jira có mô tả ngắn cùng liên kết minh chứng. PR vào `develop`, trưởng nhóm duyệt và merge; `main` nhận bản ổn định qua PR. Xem [quy trình đóng góp](CONTRIBUTING.md).
+
+## Phạm vi demo
+
+SQLite local tắt worker phục hồi/timeout/cleanup tự động. Camera cần HTTPS hoặc localhost; cuộc gọi khác mạng cần kiểm tra TURN. SQL Server thực tế, LAN và video hai thiết bị cần nghiệm thu riêng. Phân xử lặp thế WXF đầy đủ chưa hỗ trợ; xem [giới hạn luật](docs/repetition-scope.md).
